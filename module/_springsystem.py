@@ -3,10 +3,12 @@ import numpy as np
 import casadi as ca
 
 class SpringSystem:
-    def __init__(self, set_seed = True, suppress_ipopt = True):
+    def __init__(self, set_seed = None, suppress_ipopt = True):
         # for repetable results
-        if set_seed:
-            np.random.seed(0)
+        if set_seed is not None:
+            np.random.seed(set_seed)
+
+        self.set_seed = set_seed
         self.suppress_ipopt = suppress_ipopt
         
         # hyperparameters

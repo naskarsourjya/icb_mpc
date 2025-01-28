@@ -6,20 +6,23 @@ import pickle
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from ._springsystem import *
-from ._regressor import *
+from ._neuralnetwork import *
+from sklearn.model_selection import train_test_split
 
 class SurrogateCreator(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, set_seed = None):
         super(SurrogateCreator, self).__init__()
 
+        # for repetable results
+        if set_seed is not None:
+            np.random.seed(set_seed)
+
         # data
+        self.set_seed = set_seed
         self.data = {}
-        self.narx_data = {}
         self.narx = {}
         self.surrogate = {}
-        self.train_data = {}
-        self.test_data = {}
-        self.sys = {}
+        self.cqr = {}
 
         # generating flags
         self.flags = {
@@ -142,6 +145,10 @@ class SurrogateCreator(torch.nn.Module):
         self.data['n_u'] = model.n_u
         self.data['n_y'] = model.n_y
         self.data['t_step'] = system.t_step
+        self.data['lbx'] = system.lbx
+        self.data['ubx'] = system.ubx
+        self.data['lbu'] = system.lbu
+        self.data['ubu'] = system.ubu
 
         self.flags.update({
             'data_stored': True,
@@ -150,23 +157,20 @@ class SurrogateCreator(torch.nn.Module):
         return None
 
 
-    def visualize2d(self, system):
+    def visualize2d_data(self):
 
         assert self.flags['data_stored'] == True,\
             'Data not found! First run random_trajectory_sampler(), to generate data.'
 
-        model =system._get_model()
-        assert model.n_x == 2, 'Only exclusively for systems with 2 states'
-
         # setting up plot
-        fig, ax = plt.subplots(1 + model.n_u)
+        fig, ax = plt.subplots(1 + self.data['n_u'], figsize=(24, 6 * (1 + self.data['n_u'])))
         fig.suptitle('Input and State space plot')
 
         ax[0].plot(self.data['states'][0,:], self.data['states'][1,:])
 
         # Define the limits
-        x_lower, x_upper = system.lbx[0], system.ubx[0]  # Limits for the x-axis
-        y_lower, y_upper = system.lbx[1], system.ubx[1]  # Limits for the y-axis
+        x_lower, x_upper = self.data['lbx'][0], self.data['ubx'][0]  # Limits for the x-axis
+        y_lower, y_upper = self.data['lbx'][1], self.data['ubx'][1]  # Limits for the y-axis
 
         # Plot the box with gray infill
         rect = plt.Rectangle((x_lower, y_lower), x_upper - x_lower, y_upper - y_lower,
@@ -176,11 +180,11 @@ class SurrogateCreator(torch.nn.Module):
         ax[0].set_xlabel('state 1')
         ax[0].set_ylabel('state 2')
 
-        for i in range(model.n_u):
+        for i in range(self.data['n_u']):
             ax[i+1].plot(self.data['time'].reshape((-1,)), self.data['inputs'][i, :])
             #ax[i+1].set_xticklabels([])
-            upper_limit = np.full((self.data['inputs'][i, :].shape[0],), system.ubu[i])
-            lower_limit = np.full((self.data['inputs'][i, :].shape[0],), system.lbu[i])
+            upper_limit = np.full((self.data['inputs'][i, :].shape[0],), self.data['ubu'][i])
+            lower_limit = np.full((self.data['inputs'][i, :].shape[0],), self.data['lbu'][i])
             # Plot upper and lower limits
             ax[i+1].plot(self.data['time'].reshape((-1,)), upper_limit, linestyle='dashed', color='green')
             ax[i+1].plot(self.data['time'].reshape((-1,)), lower_limit, linestyle='dashed', color='red')
@@ -197,22 +201,21 @@ class SurrogateCreator(torch.nn.Module):
         return None
 
 
-    def visualize(self, system):
+    def visualize_data(self):
         assert self.flags['data_stored'] == True, \
             'Data not found! First run random_trajectory_sampler(), to generate data.'
 
-        model = system._get_model()
-
         # setting up plot
-        fig, ax = plt.subplots(model.n_x + model.n_u)
+        fig, ax = plt.subplots(self.data['n_x'] + self.data['n_u'],
+                               figsize=(24, 6 * (self.data['n_x'] + self.data['n_u'])))
         fig.suptitle('Input and State space plot')
 
-        for i in range(model.n_x):
+        for i in range(self.data['n_x']):
             ax[i].plot(self.data['time'].reshape((-1,)), self.data['states'][i, :])
             upper_limit = np.full((self.data['states'][i, :].shape[0],),
-                                system.ubx[i])
+                                self.data['ubx'][i])
             lower_limit = np.full((self.data['states'][i, :].shape[0],),
-                                system.lbx[i])
+                                self.data['lbx'][i])
             # Plot upper and lower limits
             ax[i].plot(self.data['time'].reshape((-1,)), upper_limit, linestyle='dashed', color='green')
             ax[i].plot(self.data['time'].reshape((-1,)), lower_limit, linestyle='dashed', color='red')
@@ -222,19 +225,19 @@ class SurrogateCreator(torch.nn.Module):
             label = 'state_' + str(i+1)
             ax[i].set_ylabel(label)
 
-        for i in range(model.n_u):
-            ax[i+model.n_x].plot(self.data['time'].reshape((-1,)), self.data['inputs'][i, :])
+        for i in range(self.data['n_u']):
+            ax[i+self.data['n_x']].plot(self.data['time'].reshape((-1,)), self.data['inputs'][i, :])
 
-            upper_limit = np.full((self.data['inputs'][i, :].shape[0],), system.ubu[i])
-            lower_limit = np.full((self.data['inputs'][i, :].shape[0],), system.lbu[i])
+            upper_limit = np.full((self.data['inputs'][i, :].shape[0],), self.data['ubu'][i])
+            lower_limit = np.full((self.data['inputs'][i, :].shape[0],), self.data['lbu'][i])
             # Plot upper and lower limits
-            ax[i+model.n_x].plot(self.data['time'].reshape((-1,)), upper_limit, linestyle='dashed', color='green')
-            ax[i+model.n_x].plot(self.data['time'].reshape((-1,)), lower_limit, linestyle='dashed', color='red')
+            ax[i+self.data['n_x']].plot(self.data['time'].reshape((-1,)), upper_limit, linestyle='dashed', color='green')
+            ax[i+self.data['n_x']].plot(self.data['time'].reshape((-1,)), lower_limit, linestyle='dashed', color='red')
 
             # gray infill
-            ax[i+model.n_x].fill_between(self.data['time'].reshape((-1,)), lower_limit, upper_limit, color='gray', alpha=0.5)
+            ax[i+self.data['n_x']].fill_between(self.data['time'].reshape((-1,)), lower_limit, upper_limit, color='gray', alpha=0.5)
             label = 'input_' + str(i + 1)
-            ax[i + model.n_x].set_ylabel(label)
+            ax[i + self.data['n_x']].set_ylabel(label)
 
         ax[-1].set_xlabel('time')
         fig.legend()
@@ -277,45 +280,16 @@ class SurrogateCreator(torch.nn.Module):
 
         return None
 
-    def data_test_train_splitter(self, train_split= 0.2):
-        assert self.flags['data_stored'] == True, \
-            'Data not found! First run random_trajectory_sampler(), to generate data.'
-
-        #self.data['states'] = data_x
-        #self.data['inputs'] = data_u
-        #self.data['time'] = data_t
-        #self.data['n_samples'] = n_samples
-        #self.data['n_x'] = self.system.model.n_x
-        #self.data['n_u'] = self.system.model.n_u
-        #self.data['n_y'] = self.system.model.n_y
-        #self.data['t_step'] = self.system.t_step
-
-        train_split_len = int(train_split*self.data['n_samples'])
-
-        # splitting series
-        self.train_data['states'] = self.data['states'][:, :train_split_len]
-        self.train_data['inputs'] = self.data['inputs'][:, :train_split_len]
-
-        self.test_data['states'] = self.data['states'][:, train_split_len:]
-        self.test_data['inputs'] = self.data['inputs'][:, train_split_len:]
-
-        # flag update
-        self.flags.update({
-            'data_split': True,
-        })
-
-        return None
-
 
     def input_preprocessing(self, states, inputs):
-        assert states.shape[0] == self.narx['n_x'], (
+        assert states.shape[0] == self.data['n_x'], (
             'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
 
-        assert inputs.shape[0] == self.narx['n_u'], (
+        assert inputs.shape[0] == self.data['n_u'], (
             'Expected number of inputs is: {}, but found {}'.format(self.data['n_u'], inputs.shape[0]))
 
 
-        order = self.narx['order']
+        order = self.data['order']
         n_samples = states.shape[1] - 1
 
         # stacking states and inputs with order
@@ -330,42 +304,75 @@ class SurrogateCreator(torch.nn.Module):
 
 
     def output_preprocessing(self, states):
-        assert states.shape[0] == self.narx['n_x'], (
+        assert states.shape[0] == self.data['n_x'], (
             'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
 
         # data gen
-        narx_output = states[:,self.narx['order']:]
+        narx_output = states[:,self.data['order']:]
 
         # end
         return narx_output
 
-    def data_preprocessing(self, order):
+
+    def data_splitter(self, order, narx_train= 0.4,
+                      cqr_train= 0.4, cqr_calibration= 0.1, test = 0.1):
+        assert self.flags['data_stored'] == True, \
+            'Data not found! First run random_trajectory_sampler(), to generate data.'
         assert order >= 1, 'Please ensure order is an integer greater than or equal to 1!'
-        assert self.flags['data_split'] == True, 'Splitted data not found!'
 
         # store order
+        self.data['order'] = order
+
+        # concatinating the deta with
+        X = self.input_preprocessing(states=self.data['states'], inputs=self.data['inputs']).T
+        Y = self.output_preprocessing(states=self.data['states']).T
+        t = self.data['time'][:, order:].T
+
+        sets = ['narx_train', 'cqr_train', 'cqr_calibration', 'test']
+        ratios = [narx_train, cqr_train, cqr_calibration, test]
+
+        for i, set in enumerate(sets[:-1]):
+            input_name = set + '_inputs'
+            output_name = set + '_outputs'
+            time_name = set + '_timestamps'
+
+            ratio = ratios[i] / sum(ratios[i:])
+            if i == len(sets) -2:
+                last_input_name = sets[-1] + '_inputs'
+                last_output_name = sets[-1] + '_outputs'
+                last_time_name = sets[-1] + '_timestamps'
+
+                (self.data[last_input_name], self.data[input_name], self.data[last_output_name], self.data[output_name],
+                 self.data[last_time_name], self.data[time_name]) = (
+                    train_test_split(X, Y, t, test_size=ratio, random_state=self.set_seed))
+
+
+            else:
+                X, self.data[input_name], Y, self.data[output_name], t, self.data[time_name] = (
+                        train_test_split(X, Y, t, test_size=ratio, random_state=self.set_seed))
+
+        for set in sets:
+            input_name = set + '_inputs'
+            output_name = set + '_outputs'
+            time_name = set + '_timestamps'
+
+            self.data[input_name] = self.data[input_name].T
+            self.data[output_name] = self.data[output_name].T
+            self.data[time_name] = self.data[time_name].T
+
+
+
+        # storage
+        self.narx['n_samples'] = self.data['narx_train_inputs'].shape[1]
         self.narx['order'] = order
-        self.narx['n_samples'] = self.train_data['states'].shape[1] - 1
         self.narx['n_x'] = self.data['n_x']
         self.narx['n_u'] = self.data['n_u']
         self.narx['n_y'] = self.data['n_y']
         self.narx['t_step'] = self.data['t_step']
 
-
-        # preparing data for NARX
-        narx_input = self.input_preprocessing(states=self.train_data['states'], inputs=self.train_data['inputs'])
-        narx_output = self.output_preprocessing(states=self.train_data['states'])
-
-        # storage
-        self.narx_data['inputs'] = narx_input
-        self.narx_data['input_shape'] = narx_input.shape[0]
-        self.narx_data['output'] = narx_output
-        self.narx_data['output_shape'] = narx_output.shape[0]
-        self.narx_data['t_step'] = self.data['t_step']
-
         # flag update
         self.flags.update({
-           'data_preprocessed': True,
+            'data_split': True,
         })
 
         return None
@@ -377,60 +384,134 @@ class SurrogateCreator(torch.nn.Module):
 
         return None
 
-    def narx_trainer(self, order, hidden_layers, batch_size, learning_rate, epochs, val=0.1, device = 'auto'):
+
+    def narx_trainer(self, hidden_layers, batch_size, learning_rate, epochs= 1000,
+                     validation_split = 0.2, scheduler_flag = True, device = 'auto', train_threshold = 1e-8):
         assert self.flags['data_stored'] == True, \
             'Data does not exist! Generate or load data!'
 
-
-
-        self.data_preprocessing(order=order)
-
+        # init
         narx_model = Regressor(input_size= self.narx['order']*(self.narx['n_x'] + self.narx['n_u']),
                                 output_size= self.narx['n_x'],
                                 hidden_layers=hidden_layers, device=device)
+        train_history = {'training_loss': [],
+                         'validation_loss': [],
+                         'learning_rate': [],
+                         'epochs': []}
 
+        # setting computation device
         self._set_device(torch_device= narx_model.torch_device)
 
-        X = torch.tensor(self.narx_data['inputs'].T, dtype=torch.float32)
-        Y = torch.tensor(self.narx_data['output'].T, dtype=torch.float32)
+        # converting datasets to tensors
+        X_torch = torch.tensor(self.data['narx_train_inputs'].T, dtype=torch.float32)
+        Y_torch = torch.tensor(self.data['narx_train_outputs'].T, dtype=torch.float32)
 
-        # Create data loader
-        dataset = torch.utils.data.TensorDataset(X, Y)
-        training_data, test_data = torch.utils.data.random_split(dataset, [1 - val, val],
-                                                            generator=torch.Generator(device=narx_model.torch_device))
-        train_dataloader = torch.utils.data.DataLoader(training_data, batch_size=batch_size, shuffle=True,
-                                                  generator= torch.Generator(device=narx_model.torch_device))
-        test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=True,
-                                                       generator=torch.Generator(device=narx_model.torch_device))
+        # Create TensorDataset
+        dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
 
+        # splitting full datset
+        train_dataset, validation_dataset = (
+            torch.utils.data.random_split(dataset= dataset, lengths=[1-validation_split, validation_split],
+                            generator=torch.Generator(device=narx_model.torch_device).manual_seed(self.set_seed)))
+
+        # creating DataLoader with batch_size
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                            generator= torch.Generator(device=narx_model.torch_device).manual_seed(self.set_seed))
+        validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=batch_size, shuffle=True,
+                            generator=torch.Generator(device=narx_model.torch_device).manual_seed(self.set_seed))
+
+        # setting up Mean Squared Error as loss function for training
         criterion = torch.nn.MSELoss()
+
+        # setting up optimiser for training
         optimizer = torch.optim.Adam(narx_model.parameters(), lr=learning_rate)
-        val_loss = -1
-        for epoch in tqdm(range(epochs), desc= 'Training NARX:'):
+
+        # scheduler setup
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+
+        # main training loop
+        for epoch in tqdm(range(epochs), desc= 'Training NARX'):
+
+            # narx training
+            train_loss = 0
             for batch_X, batch_Y in train_dataloader:
+
                 # Forward pass
                 predictions = narx_model(batch_X).squeeze()
                 loss = criterion(predictions, batch_Y)
 
-                # Backward pass
+                # Backward pass / parameters update
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+                # storing loss
+                train_loss += loss.item()
+
+            # narx validation
             val_loss = 0
-            for batch_X, batch_Y in test_dataloader:
+            for batch_X, batch_Y in validation_dataloader:
                 with torch.no_grad():
                     predictions = narx_model(batch_X).squeeze()
                     val_loss += criterion(predictions, batch_Y).item()
-            #print(val_loss)
+
+            # storing data
+            train_history['training_loss'].append(train_loss)
+            train_history['validation_loss'].append(val_loss)
+            train_history['epochs'].append(epoch)
+            train_history['learning_rate'].append(optimizer.param_groups[0]["lr"])
+
+            # learning rate update
+            if scheduler_flag:
+                lr_scheduler.step(val_loss)
+
+                # break if training min learning rate is reached
+                if optimizer.param_groups[0]["lr"] <= train_threshold:
+                    break
 
         # store model
         self.narx['model'] = narx_model
         self.narx['hidden_layers'] = hidden_layers
+        self.narx['training_loss'] = train_history['training_loss']
+        self.narx['validation_loss'] = train_history['validation_loss']
+        self.narx['epochs'] = train_history['epochs']
+        self.narx['learning_rate'] = train_history['learning_rate']
 
         # flag update
         self.flags.update({
             'narx_ready': True,
         })
+
+        # end
+        return None
+
+
+    def plot_narx_training_history(self):
+        assert self.flags['narx_ready'] == True, \
+            'NARX not found! Generate or load NARX model!'
+
+        # plot init
+        fig, ax = plt.subplots(2, figsize=(24, 6 * 2))
+        fig.suptitle('NARX Training History')
+
+        # plot 1
+        ax[0].plot(self.narx['epochs'], self.narx['learning_rate'], label='Learning Rate')
+        ax[0].set_xlabel('Epochs')
+        ax[0].set_ylabel('Learning Rate')
+        ax[0].set_yscale('log')
+
+        # plot 2
+        ax[1].plot(self.narx['epochs'], self.narx['training_loss'], label='Training Loss')
+        ax[1].plot(self.narx['epochs'], self.narx['validation_loss'], label='Validation Loss')
+        ax[1].set_xlabel('Epochs')
+        ax[1].set_ylabel('Loss')
+        ax[1].set_yscale('log')
+        ax[1].legend()
+
+        # show plot
+        plt.show()
+
+        # end
         return None
 
 
@@ -653,10 +734,16 @@ class SurrogateCreator(torch.nn.Module):
         # ensuring this is the current input
         # stacking states and inputs with order
         order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
-        order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
 
-        # stacking states and inputs for narx model
-        initial_cond = np.vstack([order_states, order_inputs])
+        # if order is 2 or more, only then previous inputs are needed
+        if self.surrogate['order'] > 1:
+            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
+
+            # stacking states and inputs for narx model
+            initial_cond = np.vstack([order_states, order_inputs])
+
+        else:
+            initial_cond = order_states
 
         # passing initial cond
         self.surrogate['simulator'].x0 = initial_cond
@@ -685,25 +772,21 @@ class SurrogateCreator(torch.nn.Module):
         return x0
 
 
-    def surrogate_error(self, system):
+    def surrogate_error(self, cqr_train_inputs, cqr_train_outputs):
         assert self.flags['data_split'] == True, 'Split data not found!'
-
-        #self.test_data['states'] = self.data['states'][:, train_split_len:]
-        #self.test_data['inputs']
+        assert self.flags['narx_ready'] == True, 'NARX model not found. Generate or load NARX model!'
 
         # init
         error = []
-        narx_input = self.input_preprocessing(states=self.test_data['states'], inputs=self.test_data['inputs'])
-        narx_output = self.output_preprocessing(states=self.test_data['states'])
-        n_samples = narx_input.shape[1]
+        n_samples = cqr_train_inputs.shape[1]
 
-
+        # calculating error
         for i in tqdm(range(n_samples), desc= 'Calculating surrogate model error'):
 
             # extracting individual elements
-            states = narx_input[0:self.narx['order']*self.narx['n_x'],i].reshape((-1, self.narx['order']))
-            inputs = narx_input[self.narx['order']*self.narx['n_x']:,i].reshape((-1, self.narx['order']))
-            output = narx_output[:, i].reshape((-1,1))
+            states = cqr_train_inputs[0:self.data['order']*self.data['n_x'],i].reshape((-1, self.data['order']))
+            inputs = cqr_train_inputs[self.data['order']*self.data['n_x']:,i].reshape((-1, self.data['order']))
+            output = cqr_train_outputs[:, i].reshape((-1,1))
 
             # extracting inputs
             input_history = inputs[:, 0:-1]
@@ -723,10 +806,446 @@ class SurrogateCreator(torch.nn.Module):
         # error np array
         error = np.concatenate(error, axis=1)
 
+        # end
         return error
 
+    def _pinball_loss(self, y, y_hat, quantile):
 
-    def train_cqr(self):
+        #if y > y_hat:
+        #    loss = quantile * (y - y_hat)
+        #else:
+        #    loss = (1 - quantile) * (y_hat - y)
+
+        # converting to scalar
+        #mean_loss = torch.mean(loss)
+
+        diff = y - y_hat
+        loss = torch.maximum(quantile * diff, (quantile - 1) * diff)
+        mean_loss = loss.mean()
+
+        # end
+        return mean_loss
 
 
+    def train_individual_cqr(self, miss_coverage, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
+                  validation_split= 0.2, scheduler_flag= True, epochs = 1000, train_threshold = 1e-8):
+
+        assert self.flags['data_split'] == True, 'Split data not found!'
+
+        # calculate the surrogate model error
+        self.data['cqr_train_errors'] = self.surrogate_error(cqr_train_inputs= self.data['cqr_train_inputs'],
+                                                             cqr_train_outputs= self.data['cqr_train_outputs'])
+
+        # init
+        models = []
+        history_list = []
+
+        # generating quantiles
+        low_quantiles = [mc/2 for mc in miss_coverage]
+        high_quantiles = [1-mc/2 for mc in miss_coverage]
+        quantiles = low_quantiles + high_quantiles
+        n_q = len(quantiles)
+
+        # creating a model for each quantile
+        for quantile in quantiles:
+
+            # model init
+            cqr_model_n = Regressor(input_size= self.narx['order']*(self.narx['n_x'] + self.narx['n_u']),
+                                output_size= self.narx['n_x'],
+                                hidden_layers=hidden_layers, device=device)
+
+            # setting training history
+            train_history = {'training_loss': [],
+                             'validation_loss': [],
+                             'learning_rate': [],
+                             'epochs': [],
+                             'quantile': []}
+
+            # setting computation device
+            self._set_device(torch_device=cqr_model_n.torch_device)
+
+            # converting datasets to tensors
+            X_torch = torch.tensor(self.data['cqr_train_inputs'].T, dtype=torch.float32)
+            Y_torch = torch.tensor(self.data['cqr_train_errors'].T, dtype=torch.float32)
+
+            # Create TensorDataset
+            dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
+
+            # splitting full datset
+            train_dataset, validation_dataset = (
+                torch.utils.data.random_split(dataset=dataset, lengths=[1 - validation_split, validation_split],
+                                              generator=torch.Generator(device=cqr_model_n.torch_device).manual_seed(
+                                                  self.set_seed)))
+
+            # creating DataLoader with batch_size
+            train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                                                           generator=torch.Generator(
+                                                               device=cqr_model_n.torch_device).manual_seed(
+                                                               self.set_seed))
+            validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=batch_size, shuffle=True,
+                                                                generator=torch.Generator(
+                                                                    device=cqr_model_n.torch_device).manual_seed(
+                                                                    self.set_seed))
+
+            # setting up optimiser for training
+            optimizer = torch.optim.Adam(cqr_model_n.parameters(), lr=learning_rate)
+
+            # scheduler setup
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+
+            # main training loop
+            for epoch in tqdm(range(epochs), desc=f'Training Cqr q= {quantile}'):
+
+                # cqr training
+                train_loss = 0
+                for batch_X, batch_Y in train_dataloader:
+                    # Forward pass
+                    Y_hat = cqr_model_n(batch_X).squeeze()
+                    loss = self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile)
+
+                    # Backward pass / parameters update
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                    # storing loss
+                    train_loss += loss.item()
+
+                # narx validation
+                val_loss = 0
+                for batch_X, batch_Y in validation_dataloader:
+                    with torch.no_grad():
+                        Y_hat = cqr_model_n(batch_X).squeeze()
+                        val_loss += self._pinball_loss(y= batch_Y, y_hat= Y_hat, quantile=quantile).item()
+
+                # storing data
+                train_history['quantile'].append(quantile)
+                train_history['training_loss'].append(train_loss)
+                train_history['validation_loss'].append(val_loss)
+                train_history['epochs'].append(epoch)
+                train_history['learning_rate'].append(optimizer.param_groups[0]["lr"])
+
+                # learning rate update
+                if scheduler_flag:
+                    lr_scheduler.step(val_loss)
+
+                    # break if training min learning rate is reached
+                    if optimizer.param_groups[0]["lr"] <= train_threshold:
+                        break
+
+            # storage
+            models.append(cqr_model_n)
+            history_list.append(train_history)
+
+        # creating one merged model
+        cqr_model = MergedModel(models= models, device= device)
+
+        # store model
+        self.cqr['model'] = cqr_model
+        self.cqr['train_history_list'] = history_list
+        self.cqr['quantiles'] = quantiles
+        self.cqr['order'] = self.data['order']
+        self.cqr['n_x'] = self.data['n_x']
+        self.cqr['n_u'] = self.data['n_u']
+        self.cqr['n_y'] = self.data['n_y']
+        self.cqr['n_q'] = n_q
+        self.cqr['type'] = 'individual'
+
+        # flag update
+        self.flags.update({
+            'cqr_ready': True,
+        })
+
+        # end
+        return None
+
+
+    def train_all_cqr(self, miss_coverage, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
+                  validation_split= 0.2, scheduler_flag= True, epochs = 1000, train_threshold = 1e-8):
+
+        assert self.flags['data_split'] == True, 'Split data not found!'
+
+        # calculate the surrogate model error
+        self.data['cqr_train_errors'] = self.surrogate_error(cqr_train_inputs= self.data['cqr_train_inputs'],
+                                                             cqr_train_outputs= self.data['cqr_train_outputs'])
+
+        # init
+        models = []
+        history_list = []
+
+        # generating quantiles
+        low_quantiles = [mc/2 for mc in miss_coverage]
+        high_quantiles = [1-mc/2 for mc in miss_coverage]
+        quantiles = low_quantiles + high_quantiles
+        n_q = len(quantiles)
+
+        # model init
+        cqr_model = Regressor(input_size=self.narx['order'] * (self.narx['n_x'] + self.narx['n_u']),
+                                output_size=self.narx['n_x'] * n_q,
+                                hidden_layers=hidden_layers, device=device)
+
+        # setting training history
+        train_history = {'training_loss': [],
+                         'validation_loss': [],
+                         'learning_rate': [],
+                         'epochs': [],
+                         'quantile': []}
+
+        # setting computation device
+        self._set_device(torch_device=cqr_model.torch_device)
+
+        # converting datasets to tensors
+        X_torch = torch.tensor(self.data['cqr_train_inputs'].T, dtype=torch.float32)
+
+        # stacking once per quantile
+        Y_stacked = np.vstack([self.data['cqr_train_errors'] for _ in range(n_q)])
+
+        # converting to tensor
+        Y_torch = torch.tensor(Y_stacked.T, dtype=torch.float32)
+
+        # Create TensorDataset
+        dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
+
+        # splitting full datset
+        train_dataset, validation_dataset = (
+            torch.utils.data.random_split(dataset=dataset, lengths=[1 - validation_split, validation_split],
+                                          generator=torch.Generator(device=cqr_model.torch_device).manual_seed(
+                                              self.set_seed)))
+
+        # creating DataLoader with batch_size
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                                                       generator=torch.Generator(
+                                                           device=cqr_model.torch_device).manual_seed(
+                                                           self.set_seed))
+        validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=batch_size, shuffle=True,
+                                                            generator=torch.Generator(
+                                                                device=cqr_model.torch_device).manual_seed(
+                                                                self.set_seed))
+
+        # setting up optimiser for training
+        optimizer = torch.optim.Adam(cqr_model.parameters(), lr=learning_rate)
+
+        # scheduler setup
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+
+        # main training loop
+        for epoch in tqdm(range(epochs), desc=f'Training All CQR'):
+
+            # cqr training
+            train_loss = 0
+            for batch_X, batch_Y in train_dataloader:
+                # Forward pass
+                Y_hat = cqr_model(batch_X).squeeze()
+                loss = 0
+                for quantile in quantiles:
+                    loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile)
+
+                # Backward pass / parameters update
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                # storing loss
+                train_loss += loss.item()
+
+            # narx validation
+            val_loss = 0
+            for batch_X, batch_Y in validation_dataloader:
+                with torch.no_grad():
+                    Y_hat = cqr_model(batch_X).squeeze()
+                    for quantile in quantiles:
+                        val_loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile).item()
+
+            # storing data
+            train_history['quantile'].append(quantile)
+            train_history['training_loss'].append(train_loss)
+            train_history['validation_loss'].append(val_loss)
+            train_history['epochs'].append(epoch)
+            train_history['learning_rate'].append(optimizer.param_groups[0]["lr"])
+
+            # learning rate update
+            if scheduler_flag:
+                lr_scheduler.step(val_loss)
+
+                # break if training min learning rate is reached
+                if optimizer.param_groups[0]["lr"] <= train_threshold:
+                    break
+
+        # storage
+        history_list.append(train_history)
+
+        # store model
+        self.cqr['model'] = cqr_model
+        self.cqr['train_history_list'] = history_list
+        self.cqr['quantiles'] = quantiles
+        self.cqr['order'] = self.data['order']
+        self.cqr['n_x'] = self.data['n_x']
+        self.cqr['n_u'] = self.data['n_u']
+        self.cqr['n_y'] = self.data['n_y']
+        self.cqr['n_q'] = n_q
+        self.cqr['type'] = 'all'
+
+        # flag update
+        self.flags.update({
+            'cqr_ready': True,
+        })
+
+        # end
+        return None
+
+
+    def save_cqr(self, filename):
+        assert self.flags['narx_ready'], 'CQR model not found!'
+
+        # dict format
+        storer = {'cqr': self.cqr}
+
+        # Save dictionary to pickle file
+        with open(filename, "wb") as file:  # Open the file in write-binary mode
+            pickle.dump(storer, file)
+
+        # end
+        return None
+
+    def load_cqr(self, filename):
+        assert self.flags['cqr_ready'] == False, \
+            'NARX model already exists! Create a new object to load narx.'
+
+        # read file
+        with open(filename, "rb") as file:  # Open the file in read-binary mode
+            storer = pickle.load(file)
+
+        # store data
+        self.cqr = storer['cqr']
+        # self.system = storer['system']
+
+        # update flag
+        self.flags.update({
+            'cqr_ready': True,
+        })
+
+        return None
+
+
+    def plot_cqr_training_history(self):
+        assert self.flags['cqr_ready'] == True, \
+            'CQR not found! Generate or load CQR model!'
+        if self.cqr['type'] == 'individual':
+            # plot init
+            fig, ax = plt.subplots(len(self.cqr['quantiles']), 2, figsize=(24, 6 * len(self.cqr['quantiles'])))
+            fig.suptitle('Individual CQR Training History')
+
+            for i, quantile in enumerate(self.cqr['quantiles']):
+
+                # extracting history
+                training_history = self.cqr['train_history_list'][i]
+
+                # plot 1
+                ax[i, 0].plot(training_history['epochs'], training_history['learning_rate'], label='Learning Rate')
+                ax[i, 0].set_xlabel('Epochs')
+                ax[i, 0].set_ylabel(f'CQR (q={quantile})\nLearning Rate')
+                ax[i, 0].set_yscale('log')
+
+                # plot 2
+                ax[i, 1].plot(training_history['epochs'], training_history['training_loss'], label='Training Loss')
+                ax[i, 1].plot(training_history['epochs'], training_history['validation_loss'], label='Validation Loss')
+                ax[i, 1].set_xlabel('Epochs')
+                ax[i, 1].set_ylabel(f'CQR (q={quantile})\nLoss')
+                ax[i, 1].set_yscale('log')
+                ax[i, 1].legend()
+
+            # show plot
+            plt.show()
+
+
+        elif self.cqr['type'] == 'all':
+
+            # plot init
+            fig, ax = plt.subplots(2, figsize=(24, 6))
+            fig.suptitle('All CQR Training History')
+
+            # extracting history
+            training_history = self.cqr['train_history_list'][0]
+
+            # plot 1
+            ax[0].plot(training_history['epochs'], training_history['learning_rate'], label='Learning Rate')
+            ax[0].set_xlabel('Epochs')
+            ax[0].set_ylabel(f'Learning Rate')
+            ax[0].set_yscale('log')
+
+            # plot 2
+            ax[1].plot(training_history['epochs'], training_history['training_loss'], label='Training Loss')
+            ax[1].plot(training_history['epochs'], training_history['validation_loss'], label='Validation Loss')
+            ax[1].set_xlabel('Epochs')
+            ax[1].set_ylabel(f'Loss')
+            ax[1].set_yscale('log')
+            ax[1].legend()
+
+
+
+        # end
+        return None
+
+    def plot_qr_temp(self):
+
+        # calculate the surrogate model error on calibration
+        self.data['cqr_calibration_errors'] = self.surrogate_error(cqr_train_inputs=self.data['cqr_calibration_inputs'],
+                                                             cqr_train_outputs=self.data['cqr_calibration_outputs'])
+
+        # setting default device
+        self._set_device(torch_device=self.cqr['model'].torch_device)
+
+        # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
+        X_narx = torch.tensor(self.data['cqr_calibration_inputs'].T, dtype=torch.float32)
+
+        # making prediction
+        with torch.no_grad():
+            Y_pred = self.cqr['model'](X_narx).cpu().numpy().T
+
+        # init
+        n_x = self.cqr['n_x']
+        n_q = self.cqr['n_q']
+        quantiles = self.cqr['quantiles']
+
+        # setting up plots
+        fig, ax = plt.subplots(self.cqr['n_x'], figsize=(24, 6 * n_x))
+        fig.suptitle('CQR quantile plots')
+
+        # plot for each state
+        for i in range(n_x):
+
+            # plot for each quantile
+            for j in range(n_q):
+                index = i + n_x * j
+                x = self.data['cqr_calibration_timestamps'].reshape(-1,)
+                y = Y_pred[index,:]
+
+                # Sort the data by x values
+                sorted_indices = np.argsort(x)  # Get indices that would sort x
+                x_sorted = x[sorted_indices]
+                y_sorted = y[sorted_indices]
+
+                ax[i].plot(x_sorted, y_sorted, label=f'Quantile {quantiles[j]}')
+
+        # plotting the mean states for each state
+        for i in range(n_x):
+            x = self.data['cqr_calibration_timestamps'].reshape(-1,)
+            y = self.data['cqr_calibration_errors'][i,:]
+
+            # Sort the data by x values
+            sorted_indices = np.argsort(x)  # Get indices that would sort x
+            x_sorted = x[sorted_indices]
+            y_sorted = y[sorted_indices]
+
+            ax[i].plot(x_sorted, y_sorted, label=f'real_mean')
+            ax[i].set_ylabel(f'State_{i})')
+            ax[i].legend()
+
+        # x label
+        ax[-1].set_xlabel(f'Time [s]')
+
+        # show plot
+        plt.show()
+
+        # end
         return None

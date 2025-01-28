@@ -60,4 +60,54 @@ class Regressor(nn.Module):
         self.torch_device = torch.device(device)
         torch.set_default_device(self.torch_device)
 
+        # end
+        return None
+
+
+class MergedModel(nn.Module):
+    def __init__(self, models, device = 'auto'):
+        """
+        Initializes the MergedModel with a list of models.
+
+        Args:
+            models (list of nn.Module): List of PyTorch models to merge.
+        """
+        super(MergedModel, self).__init__()
+
+        # set device
+        self._set_device(device=device)
+
+        # storage
+        self.model_list = models
+        self.models = nn.ModuleList(models)
+
+        # end
+        return None
+
+    def forward(self, x):
+        """
+        Forward pass through all models, combining their outputs.
+
+        Args:
+            x (torch.Tensor): Input tensor to be fed into all models.
+
+        Returns:
+            torch.Tensor: Concatenated outputs from all models.
+        """
+        # listing all outputs
+        outputs = [model(x) for model in self.models]
+
+        # end
+        return torch.cat(outputs, dim=1)
+
+    def _set_device(self, device):
+        # auto choose gpu if gpu is available
+        if device == 'auto':
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        # torch default device is set
+        self.torch_device = torch.device(device)
+        torch.set_default_device(self.torch_device)
+
+        # end
         return None

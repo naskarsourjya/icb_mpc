@@ -19,7 +19,11 @@ the system goes out of the box constraints. Thus, I put up a RuntimeError in the
 
 # Week 1 (13/01/2025)
 
-Queries from Mentors
+## Closed points
+
+Make an algorithm for random input training.
+
+## Coments from Mentors
 
 Why random trajectory mpc? This is makin git incresingly complex, especiallly the presence of an mpc making it substantially slower.
 
@@ -38,14 +42,31 @@ The errors are not zero, but very close. It needs to be quantified.
 1. Performance better on random state trajectory method (smaller errors with same no of samples). Also, in case of random input trajectory, the states far exceed the boundaries.
 2. What are the inputs for the CQR models, same as NARX?
 3. Confirm test train split!! train-->NARX, calibration-->CQR and test split-->validation and performance metrics.
-4. 
 
-Queries from Mentors
 
-# open points
-1. The errors between the do_mpc surrogate model and the pytorch narx model are not zero, but very close. It needs to be quantified.
-2. Make an algorithm for random input training.
-3. Checkout splitting of data in narx training and also in make steps. Also check in what order is history for state and input used. (Checked, ref: check excel sheet)
+# Week 3 (27/01/2025)
+
+## Closed Points
+The errors between the do_mpc surrogate model and the pytorch narx model are not zero, but very close. It needs to be quantified.
+This reduceds when order = 1
+
+Checkout splitting of data in narx training and also in make steps. Also check in what order is history for state and input used. (Checked, ref: check excel sheet)
+
+Completely redone data splitter function, where instead of splitting the raw series sequentially, I am generating the ordered narx data adn then randomly splitting data for different purposes.
+
+Start with 100000 for tarining narx, 100000 for cqr calibration, 100 (done)
+
+Query?
+Should I keep the current QR training where we train individually each regressor or should we combine the outputs and train all th regressors simultaneously.
+
+What is mod(I2)?? Page 6 of reghu paper 6
+
+
+## open points
+
+Scale data (standard scaling or min max scaling) before training.
+
+Look up soruce no 12 from reghu paper
 
 # List of hyperparameters
 1. number of layers for narx
