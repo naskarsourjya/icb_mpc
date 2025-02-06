@@ -2,8 +2,9 @@ import do_mpc
 import numpy as np
 import casadi as ca
 
+
 class SpringSystem:
-    def __init__(self, set_seed = None, suppress_ipopt = True):
+    def __init__(self, set_seed=None, suppress_ipopt=True):
         # for repetable results
         if set_seed is not None:
             np.random.seed(set_seed)
@@ -20,7 +21,7 @@ class SpringSystem:
         #self.random_traj_mpc = self._get_spring_random_traj_mpc(model= self.model)
         #self.estimator = do_mpc.estimator.StateFeedback(model= self.model)
 
-        return None
+        # end of init
 
     def _set_hyperparameters(self):
         self.t_step = 0.1

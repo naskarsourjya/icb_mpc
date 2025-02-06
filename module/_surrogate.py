@@ -31,11 +31,21 @@ class SurrogateCreator(torch.nn.Module):
             'data_preprocessed': False,
             'narx_ready': False,
             'surrogate_ready': False,
-            'surrogate_initial_condition_ready': False
+            'surrogate_initial_condition_ready': False,
+            'qr_ready': False,
+            'cqr_ready': False,
+            'cqr_initial_condition_ready': False
         }
 
-        return None
+        # end of init
 
+    def reshape(self, array, shape):
+
+        # rows and columns
+        rows, cols = shape
+
+        # end
+        return array.reshape(cols, rows).T
 
     def random_state_sampler(self, system, n_samples):
         assert self.flags['data_stored'] == False, \
@@ -48,7 +58,8 @@ class SurrogateCreator(torch.nn.Module):
         estimator = do_mpc.estimator.StateFeedback(model= model)
 
         # random initial state
-        x0 = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
+        #x0 = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
+        x0 = self.reshape(np.random.uniform(system.lbx, system.ubx), shape=(model.n_x, 1))
 
         simulator.x0 = x0
         simulator.set_initial_guess()
@@ -103,7 +114,8 @@ class SurrogateCreator(torch.nn.Module):
         estimator = do_mpc.estimator.StateFeedback(model= model)
 
         # random initial state
-        x0 = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
+        #x0 = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
+        x0 = self.reshape(np.random.uniform(system.lbx, system.ubx), shape= (model.n_x, 1))
 
         simulator.x0 = x0
         simulator.set_initial_guess()
@@ -116,7 +128,8 @@ class SurrogateCreator(torch.nn.Module):
 
             # executes if the system decides for a change
             if np.random.rand() < change_probability:
-                u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1,1))
+                #u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1,1))
+                u0 = self.reshape(np.random.uniform(system.lbu, system.ubu), shape=(-1,1))
                 u_prev = u0
 
             # executes if the system decides to not change
@@ -318,7 +331,10 @@ class SurrogateCreator(torch.nn.Module):
                       cqr_train= 0.4, cqr_calibration= 0.1, test = 0.1):
         assert self.flags['data_stored'] == True, \
             'Data not found! First run random_trajectory_sampler(), to generate data.'
+
         assert order >= 1, 'Please ensure order is an integer greater than or equal to 1!'
+
+        assert isinstance(order, int), "Order must be an integer more than or equal to 1!"
 
         # store order
         self.data['order'] = order
@@ -494,19 +510,29 @@ class SurrogateCreator(torch.nn.Module):
         fig, ax = plt.subplots(2, figsize=(24, 6 * 2))
         fig.suptitle('NARX Training History')
 
-        # plot 1
+        # plot 1: Learning rate plot
         ax[0].plot(self.narx['epochs'], self.narx['learning_rate'], label='Learning Rate')
         ax[0].set_xlabel('Epochs')
         ax[0].set_ylabel('Learning Rate')
         ax[0].set_yscale('log')
+        ax[0].grid()
 
-        # plot 2
-        ax[1].plot(self.narx['epochs'], self.narx['training_loss'], label='Training Loss')
-        ax[1].plot(self.narx['epochs'], self.narx['validation_loss'], label='Validation Loss')
+
+        # plot 2: Training Loss plots
+        ax[1].plot(self.narx['epochs'], self.narx['training_loss'], color='blue', label='Training Loss')
         ax[1].set_xlabel('Epochs')
-        ax[1].set_ylabel('Loss')
+        ax[1].set_ylabel('Training Loss', color='blue')
         ax[1].set_yscale('log')
-        ax[1].legend()
+        ax[1].tick_params(axis='y', labelcolor='blue')
+        ax[1].grid()
+
+        # plot 2: Validation Plot
+        ax_n = ax[1].twinx()
+        ax_n.plot(self.narx['epochs'], self.narx['validation_loss'], color='red', label='Validation Loss')
+        ax_n.tick_params(axis='y', labelcolor='red')
+        ax_n.set_ylabel('Validation Loss', color='red')
+        ax_n.set_yscale('log')
+
 
         # show plot
         plt.show()
@@ -554,8 +580,8 @@ class SurrogateCreator(torch.nn.Module):
 
         assert states.shape[1] == inputs.shape[1], 'Number of samples for both states and inputs should match!'
 
-        assert states.shape[1] >= self.narx['order'], \
-            'Number of samples must exceed or be equal to the order of the NARX model!'
+        assert states.shape[1] == self.narx['order'], \
+            'Number of samples must be equal to the order of the NARX model!'
 
         assert states.shape[0] == self.narx['n_x'], (
             'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
@@ -591,6 +617,7 @@ class SurrogateCreator(torch.nn.Module):
         # model setup
         # init
         model = do_mpc.model.Model(model_type='discrete', symvar_type='SX')
+        layer_counter = 0
 
         # variable setup
         system_state = model.set_variable(var_type='_x', var_name='system_state',
@@ -598,10 +625,15 @@ class SurrogateCreator(torch.nn.Module):
         system_input = model.set_variable(var_type='_u', var_name='system_input',
                                           shape=(self.narx['n_u'], 1))
 
+        # used by random state tracking algo
+        state_ref = model.set_variable(var_type='_tvp', var_name='state_ref', shape=(self.narx['n_x'], 1))
+
+        # building input layer of narx
         states_history = system_state[0:self.narx['order'] * self.narx['n_x']]
         inputs_histroy = system_state[self.narx['order'] * self.narx['n_x']:]
+
+        # narx input layer
         input_layer = ca.vertcat(states_history, system_input, inputs_histroy)
-        layer_counter = 0
 
         # reading the layers and the biases
         for layer in self.narx['model'].network:
@@ -633,15 +665,15 @@ class SurrogateCreator(torch.nn.Module):
             if i == 0:
                 rhs = output_layer
 
-            # input shifting
-            elif i == self.narx['order']:
-                rhs = ca.vertcat(rhs, system_input)
-
             # state history shifting
             elif i < self.narx['order']:
                 start = (i-1)*self.narx['n_x']
                 end = (i)*self.narx['n_x']
                 rhs = ca.vertcat(rhs, system_state[start:end])
+
+            # previous input
+            elif i == self.narx['order']:
+                rhs = ca.vertcat(rhs, system_input)
 
             # input history shifting
             else:
@@ -653,17 +685,19 @@ class SurrogateCreator(torch.nn.Module):
         model.set_rhs('system_state', rhs)
         model.setup()
 
-
         # simulator setup
         # init
         simulator = do_mpc.simulator.Simulator(model)
         simulator.set_param(t_step = self.narx['t_step'])
+        tvp_template = simulator.get_tvp_template()
+        def tvp_fun(t_ind):
+            return tvp_template
+        simulator.set_tvp_fun(tvp_fun)
         simulator.setup()
 
         # storage
         self.surrogate['model'] = model
         self.surrogate['simulator'] = simulator
-
         self.surrogate['order'] = self.narx['order']
         self.surrogate['n_x'] = self.narx['n_x']
         self.surrogate['n_u'] = self.narx['n_u']
@@ -676,7 +710,7 @@ class SurrogateCreator(torch.nn.Module):
         })
 
         # end
-        return None
+        return model, simulator
 
     def save_surrogate(self, filename):
         assert self.flags['surrogate_ready'] == True, 'Surrogate model not found. Generate Surrogate model!'
@@ -710,11 +744,8 @@ class SurrogateCreator(torch.nn.Module):
 
         return None
 
-    def simulator_set_initial_guess(self, states, inputs):
+    def simulator_set_initial_guess(self, states, inputs=None):
         assert self.flags['surrogate_ready'] == True, 'Surrogate model not found. Generate or load Surrogate model!'
-
-        assert states.shape[1] - 1 == inputs.shape[1], \
-            'Number of samples for states should exceed that of inputs by one!'
 
         assert states.shape[1] == self.surrogate['order'], \
             'Number of samples must be equal to the order of the NARX model!'
@@ -722,8 +753,14 @@ class SurrogateCreator(torch.nn.Module):
         assert states.shape[0] == self.surrogate['n_x'], (
             'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
 
-        assert inputs.shape[0] == self.surrogate['n_u'], (
-            'Expected number of inputs is: {}, but found {}'.format(self.data['n_u'], inputs.shape[0]))
+        if self.surrogate['order']>1:
+            assert isinstance(inputs, np.ndarray), "If order is more than 1, then input is needed!"
+
+            assert states.shape[1] - 1 == inputs.shape[1], \
+                'Number of samples for states should exceed that of inputs by one!'
+
+            assert inputs.shape[0] == self.surrogate['n_u'], (
+                'Expected number of inputs is: {}, but found {}'.format(self.data['n_u'], inputs.shape[0]))
 
         state_order = self.surrogate['order']
         input_order = self.surrogate['order'] - 1
@@ -754,7 +791,6 @@ class SurrogateCreator(torch.nn.Module):
             'surrogate_initial_condition_ready': True,
         })
 
-
         # end
         return None
 
@@ -784,13 +820,17 @@ class SurrogateCreator(torch.nn.Module):
         for i in tqdm(range(n_samples), desc= 'Calculating surrogate model error'):
 
             # extracting individual elements
-            states = cqr_train_inputs[0:self.data['order']*self.data['n_x'],i].reshape((-1, self.data['order']))
-            inputs = cqr_train_inputs[self.data['order']*self.data['n_x']:,i].reshape((-1, self.data['order']))
-            output = cqr_train_outputs[:, i].reshape((-1,1))
+            states = self.reshape(cqr_train_inputs[0:self.data['order']*self.data['n_x'],i],
+                                  shape=(self.data['n_x'], self.data['order']))
+            inputs = self.reshape(cqr_train_inputs[self.data['order'] * self.data['n_x']:, i],
+                                  shape=(self.data['n_u'], self.data['order']))
+            output = self.reshape(cqr_train_outputs[:, i],
+                                  shape=(self.data['n_x'], 1))
+
 
             # extracting inputs
             input_history = inputs[:, 0:-1]
-            input = inputs[:, -1].reshape((-1,1))
+            input = self.reshape(inputs[:, -1], shape=(-1, 1))
 
             # initiating system
             self.narx_2_dompc()
@@ -827,10 +867,11 @@ class SurrogateCreator(torch.nn.Module):
         return mean_loss
 
 
-    def train_individual_cqr(self, miss_coverage, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
+    def train_individual_qr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
                   validation_split= 0.2, scheduler_flag= True, epochs = 1000, train_threshold = 1e-8):
 
         assert self.flags['data_split'] == True, 'Split data not found!'
+        assert 0 < alpha < 1, "All alpha must be between 0 and 1"
 
         # calculate the surrogate model error
         self.data['cqr_train_errors'] = self.surrogate_error(cqr_train_inputs= self.data['cqr_train_inputs'],
@@ -841,9 +882,9 @@ class SurrogateCreator(torch.nn.Module):
         history_list = []
 
         # generating quantiles
-        low_quantiles = [mc/2 for mc in miss_coverage]
-        high_quantiles = [1-mc/2 for mc in miss_coverage]
-        quantiles = low_quantiles + high_quantiles
+        low_quantile = alpha/2
+        high_quantile = 1-alpha/2
+        quantiles = [high_quantile] + [low_quantile]
         n_q = len(quantiles)
 
         # creating a model for each quantile
@@ -940,10 +981,18 @@ class SurrogateCreator(torch.nn.Module):
         # creating one merged model
         cqr_model = MergedModel(models= models, device= device)
 
+        # inserting the mean prediction model
+        full_model_list = [self.narx['model']] + models
+        full_model = MergedModel(models= full_model_list, device= device)
+
         # store model
-        self.cqr['model'] = cqr_model
+        self.cqr['cqr_model'] = cqr_model
+        self.cqr['full_model'] = full_model
         self.cqr['train_history_list'] = history_list
+        self.cqr['alpha'] = alpha
         self.cqr['quantiles'] = quantiles
+        self.cqr['low_quantile'] = low_quantile
+        self.cqr['high_quantile'] = high_quantile
         self.cqr['order'] = self.data['order']
         self.cqr['n_x'] = self.data['n_x']
         self.cqr['n_u'] = self.data['n_u']
@@ -953,19 +1002,20 @@ class SurrogateCreator(torch.nn.Module):
 
         # flag update
         self.flags.update({
-            'cqr_ready': True,
+            'qr_ready': True,
         })
 
         # end
         return None
 
 
-    def train_all_cqr(self, miss_coverage, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
+    def train_all_qr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
                   validation_split= 0.2, scheduler_flag= True, epochs = 1000, train_threshold = 1e-8):
 
         assert self.flags['data_split'] == True, 'Split data not found!'
+        assert 0 < alpha < 1, "All alpha must be between 0 and 1"
 
-        # calculate the surrogate model error
+        # calculate the surrogate model error on cqr training data
         self.data['cqr_train_errors'] = self.surrogate_error(cqr_train_inputs= self.data['cqr_train_inputs'],
                                                              cqr_train_outputs= self.data['cqr_train_outputs'])
 
@@ -974,9 +1024,9 @@ class SurrogateCreator(torch.nn.Module):
         history_list = []
 
         # generating quantiles
-        low_quantiles = [mc/2 for mc in miss_coverage]
-        high_quantiles = [1-mc/2 for mc in miss_coverage]
-        quantiles = low_quantiles + high_quantiles
+        low_quantile = alpha / 2
+        high_quantile = 1 - alpha / 2
+        quantiles = [high_quantile] + [low_quantile]
         n_q = len(quantiles)
 
         # model init
@@ -1074,10 +1124,18 @@ class SurrogateCreator(torch.nn.Module):
         # storage
         history_list.append(train_history)
 
+        # inserting the mean prediction model
+        full_model_list = [self.narx['model']] + [cqr_model]
+        full_model = MergedModel(models=full_model_list, device=device)
+
         # store model
-        self.cqr['model'] = cqr_model
+        self.cqr['cqr_model'] = cqr_model
+        self.cqr['full_model'] = full_model
         self.cqr['train_history_list'] = history_list
+        self.cqr['alpha'] = alpha
         self.cqr['quantiles'] = quantiles
+        self.cqr['low_quantile'] = low_quantile
+        self.cqr['high_quantile'] = high_quantile
         self.cqr['order'] = self.data['order']
         self.cqr['n_x'] = self.data['n_x']
         self.cqr['n_u'] = self.data['n_u']
@@ -1087,7 +1145,7 @@ class SurrogateCreator(torch.nn.Module):
 
         # flag update
         self.flags.update({
-            'cqr_ready': True,
+            'qr_ready': True,
         })
 
         # end
@@ -1095,7 +1153,7 @@ class SurrogateCreator(torch.nn.Module):
 
 
     def save_cqr(self, filename):
-        assert self.flags['narx_ready'], 'CQR model not found!'
+        assert self.flags['cqr_ready'] and self.flags['qr_ready'], 'CQR model not found!'
 
         # dict format
         storer = {'cqr': self.cqr}
@@ -1108,7 +1166,7 @@ class SurrogateCreator(torch.nn.Module):
         return None
 
     def load_cqr(self, filename):
-        assert self.flags['cqr_ready'] == False, \
+        assert self.flags['cqr_ready'] == False  and self.flags['qr_ready'] == False, \
             'NARX model already exists! Create a new object to load narx.'
 
         # read file
@@ -1122,13 +1180,14 @@ class SurrogateCreator(torch.nn.Module):
         # update flag
         self.flags.update({
             'cqr_ready': True,
+            'qr_ready': True
         })
 
         return None
 
 
-    def plot_cqr_training_history(self):
-        assert self.flags['cqr_ready'] == True, \
+    def plot_qr_training_history(self):
+        assert self.flags['qr_ready'] == True, \
             'CQR not found! Generate or load CQR model!'
         if self.cqr['type'] == 'individual':
             # plot init
@@ -1145,14 +1204,22 @@ class SurrogateCreator(torch.nn.Module):
                 ax[i, 0].set_xlabel('Epochs')
                 ax[i, 0].set_ylabel(f'CQR (q={quantile})\nLearning Rate')
                 ax[i, 0].set_yscale('log')
+                ax[i, 0].grid()
 
-                # plot 2
-                ax[i, 1].plot(training_history['epochs'], training_history['training_loss'], label='Training Loss')
-                ax[i, 1].plot(training_history['epochs'], training_history['validation_loss'], label='Validation Loss')
+                # plot 2: Training Loss plots
+                ax[i, 1].plot(training_history['epochs'], training_history['training_loss'], color='blue', label='Training Loss')
                 ax[i, 1].set_xlabel('Epochs')
-                ax[i, 1].set_ylabel(f'CQR (q={quantile})\nLoss')
+                ax[i, 1].set_ylabel('Training Loss', color='blue')
                 ax[i, 1].set_yscale('log')
-                ax[i, 1].legend()
+                ax[i, 1].tick_params(axis='y', labelcolor='blue')
+                ax[i, 1].grid()
+
+                # plot 2: Validation Plot
+                ax_n = ax[i, 1].twinx()
+                ax_n.plot(training_history['epochs'], training_history['validation_loss'], color='red', label='Validation Loss')
+                ax_n.tick_params(axis='y', labelcolor='red')
+                ax_n.set_ylabel('Validation Loss', color='red')
+                ax_n.set_yscale('log')
 
             # show plot
             plt.show()
@@ -1173,72 +1240,307 @@ class SurrogateCreator(torch.nn.Module):
             ax[0].set_ylabel(f'Learning Rate')
             ax[0].set_yscale('log')
 
-            # plot 2
-            ax[1].plot(training_history['epochs'], training_history['training_loss'], label='Training Loss')
-            ax[1].plot(training_history['epochs'], training_history['validation_loss'], label='Validation Loss')
+            # plot 2: Training Loss plots
+            ax[1].plot(training_history['epochs'], training_history['training_loss'], color='blue',
+                          label='Training Loss')
             ax[1].set_xlabel('Epochs')
-            ax[1].set_ylabel(f'Loss')
+            ax[1].set_ylabel('Training Loss', color='blue')
             ax[1].set_yscale('log')
-            ax[1].legend()
+            ax[1].tick_params(axis='y', labelcolor='blue')
+            ax[1].grid()
 
-
+            # plot 2: Validation Plot
+            ax_n = ax[1].twinx()
+            ax_n.plot(training_history['epochs'], training_history['validation_loss'], color='red',
+                      label='Validation Loss')
+            ax_n.tick_params(axis='y', labelcolor='red')
+            ax_n.set_ylabel('Validation Loss', color='red')
+            ax_n.set_yscale('log')
 
         # end
         return None
 
-    def plot_qr_temp(self):
 
-        # calculate the surrogate model error on calibration
+    def conform_qr(self):
+        assert self.flags['qr_ready'] == True, \
+            'CQR not found! Train or load CQR model!'
+
+        # calculate the surrogate model error on cqr calibration data
         self.data['cqr_calibration_errors'] = self.surrogate_error(cqr_train_inputs=self.data['cqr_calibration_inputs'],
-                                                             cqr_train_outputs=self.data['cqr_calibration_outputs'])
+                                                                   cqr_train_outputs=self.data[
+                                                                       'cqr_calibration_outputs'])
 
-        # setting default device
-        self._set_device(torch_device=self.cqr['model'].torch_device)
-
-        # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_narx = torch.tensor(self.data['cqr_calibration_inputs'].T, dtype=torch.float32)
-
-        # making prediction
-        with torch.no_grad():
-            Y_pred = self.cqr['model'](X_narx).cpu().numpy().T
-
-        # init
+        # storage in convenient varaibles
+        Xi = self.data['cqr_calibration_inputs']
+        Yi = self.data['cqr_calibration_errors']
         n_x = self.cqr['n_x']
         n_q = self.cqr['n_q']
         quantiles = self.cqr['quantiles']
+        low_quantile = self.cqr['low_quantile']
+        high_quantile = self.cqr['high_quantile']
+        alpha = self.cqr['alpha']
+        n_samples = self.data['cqr_calibration_errors'].shape[1]
 
-        # setting up plots
-        fig, ax = plt.subplots(self.cqr['n_x'], figsize=(24, 6 * n_x))
-        fig.suptitle('CQR quantile plots')
+        # making quantile prediction
+        Xi_troch = torch.tensor(Xi.T, dtype=torch.float32)
+        with torch.no_grad():
+            qr_all = self.cqr['cqr_model'](Xi_troch).cpu().numpy().T
+
+        index_high = quantiles.index(high_quantile)
+        index_low = quantiles.index(low_quantile)
+
+        # storing the values
+        q_lo = qr_all[n_x * index_low: n_x + n_x * index_low, :]
+        q_hi = qr_all[n_x * index_high: n_x + n_x * index_high, :]
+
+        for j in range(n_x):
+
+            # conformalising one state at a time
+            q_lo_xn = q_lo[j,:]
+            q_hi_xn = q_hi[j, :]
+            Yi_xn = Yi[j,:]
+
+            # Generating conformity scores
+            Ei_xn = np.max(np.vstack([q_lo_xn - Yi_xn, Yi_xn - q_hi_xn]), axis = 0)
+
+            # calculating the appropriate quantile
+            error_quantile = (1 - alpha) * (1 + 1/n_samples)
+
+            # Compute the quantile
+            Q_xn = np.quantile(Ei_xn, q=error_quantile)
+
+            # storage
+            if j == 0:
+                    Q1_alpha = Q_xn
+            else:
+                Q1_alpha = np.vstack([Q1_alpha, Q_xn])
+
+        # storage
+        self.cqr['Q1_alpha'] = Q1_alpha
+
+        # update flag
+        self.flags.update({
+            'cqr_ready': True
+        })
+
+        # end
+        return None
+
+    def cqr_set_initial_guess(self, states, inputs=None):
+
+        assert self.flags['qr_ready'] == True, \
+            'CQR not found! Train or load CQR model!'
+
+        assert self.flags['cqr_ready'] == True, \
+            'QR not confromalised! Conformalise QR model.'
+
+        assert states.shape[1] == self.cqr['order'], \
+            'Number of samples must be equal to the order of the NARX model!'
+
+        assert states.shape[0] == self.cqr['n_x'], (
+            'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
+
+        if self.cqr['order']>1:
+            assert isinstance(inputs, np.ndarray), "If order is more than 1, then input is needed!"
+
+            assert states.shape[1] - 1 == inputs.shape[1], \
+                'Number of samples for states should exceed that of inputs by one!'
+
+            assert inputs.shape[0] == self.cqr['n_u'], (
+                'Expected number of inputs is: {}, but found {}'.format(self.data['n_u'], inputs.shape[0]))
+
+        # set initial condition of simulator
+        #self.simulator_set_initial_guess(states=states, inputs=inputs)
+
+        state_order = self.cqr['order']
+        state_samples = states.shape[1]
+
+        # ensuring this is the current input
+        # stacking states and inputs with order
+        order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
+
+        # if order is 2 or more, only then previous inputs are needed
+        if self.cqr['order'] > 1:
+            input_order = self.cqr['order'] - 1
+            input_samples = inputs.shape[1]
+
+            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
+
+            # stacking states and inputs for narx model
+            initial_cond = np.vstack([order_states, order_inputs])
+
+        else:
+            initial_cond = order_states
+
+        # store cqr initial contition
+        self.cqr['x0'] = initial_cond
+
+        # flag update
+        self.flags.update({
+            'cqr_initial_condition_ready': True
+        })
+
+        # end
+        return None
+
+
+    def cqr_make_step(self, u0):
+        assert self.flags['qr_ready'], "Qunatile regressor not ready."
+        assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
+        assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
+        assert u0.shape[0] == self.cqr['n_u'], \
+            f"u0 should have have {self.cqr['n_u']} rows but instead found {u0.shape[0]}!"
+        assert u0.shape[1] == 1, \
+            f"u0 should have have 1 columns but instead found {u0.shape[1]}!"
+
+        # init
+        x0 = self.cqr['x0']
+        n_x = self.cqr['n_x']
+        n_q = self.cqr['n_q']
+        n_u = self.cqr['n_u']
+        order = self.cqr['order']
+        Q1_alpha = self.cqr['Q1_alpha']
+
+
+        # segregating states and inputs
+        states = x0[0:n_x*order, :]
+        inputs = x0[n_x*order:, :]
+
+        # stacking all data
+        X = np.vstack([states, u0, inputs])
+
+        # setting default device
+        self._set_device(torch_device=self.cqr['full_model'].torch_device)
+
+        # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
+        X_torch = torch.tensor(X.T, dtype=torch.float32)
+
+        # making full model prediction
+        with torch.no_grad():
+            y_pred = self.cqr['full_model'](X_torch).cpu().numpy().T
+
+        # reshaping from a column vector to row with states and column with different quantiles
+        y_pred = self.reshape(y_pred, shape=(n_x, -1))
+
+        # mean state prediction
+        x0 = self.reshape(y_pred[:, 0], shape=(n_x, 1))
+        q_alpha = y_pred[:, 1:]
+
+        # higher quantile calculations
+        q_alpha_high = self.reshape(q_alpha[:, 0], shape=(n_x, 1))
+
+        # shifting up quantile
+        error0_cqr_high = q_alpha_high + Q1_alpha
+        error0_cqr_high = self.reshape(error0_cqr_high, shape=(n_x, 1))
+
+        # lower quantile calculations
+        q_alpha_low = self.reshape(q_alpha[:, 1], shape=(n_x, 1))
+
+        # shifting down quantile
+        error0_cqr_low = q_alpha_low - Q1_alpha
+        error0_cqr_low = self.reshape(error0_cqr_low, shape=(n_x, 1))
+
+        # real state predictions
+        x0_cqr_high = x0 + error0_cqr_high
+        x0_cqr_low = x0 + error0_cqr_low
+
+        # pushing oldest state out of system and inserting the current state
+        new_states = np.vstack([x0, states[0:(order-1)*n_x, :]])
+
+        if order>1:
+
+            # pushing oldest input out of system and inserting the current input
+            new_inputs = np.vstack([u0, inputs[0:(order-2)*n_u, :]])
+
+            # setting new initial guess by removing the last timestamp data
+            self.cqr_set_initial_guess(states=self.reshape(new_states, shape=(n_x, -1)),
+                                       inputs=self.reshape(new_inputs, shape=(n_u, -1)))
+
+        else:
+            self.cqr_set_initial_guess(states=self.reshape(new_states, shape=(n_x, -1)))
+
+        # return predictions
+        return x0, x0_cqr_high, x0_cqr_low
+
+    def plot_cqr_error(self):
+        assert self.flags['qr_ready'], "Qunatile regressor not ready."
+        assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
+
+        # extracting data
+        X_test = self.data['test_inputs']
+        Y_test = self.data['test_outputs']
+        t_test = self.data['test_timestamps']
+
+        # init
+        order = self.cqr['order']
+        n_x = self.cqr['n_x']
+        n_u = self.cqr['n_u']
+        low_quantile = self.cqr['low_quantile']
+        high_quantile = self.cqr['high_quantile']
+        n_samples = X_test.shape[1]
+        alpha = self.cqr['alpha']
+
+
+
+        # calculating model intervals
+        for i in tqdm(range(n_samples), desc='Calculating surrogate model state intervals'):
+
+            # extracting individual state and input histories
+            states_history = X_test[0:n_x*order, i]
+            inputs_n = X_test[n_x*order:, i]
+            u0 = inputs_n[0:n_u]
+            inputs_history = inputs_n[n_u:]
+
+            # simulating system
+            if order>1:
+                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
+                                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
+                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+            else:
+                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
+                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+
+            # storage
+            if i==0:
+                Y_predicted_mean = x0
+                Y_predicted_high = x0_cqr_high
+                Y_predicted_low = x0_cqr_low
+
+            else:
+                Y_predicted_mean = np.hstack([Y_predicted_mean, x0])
+                Y_predicted_high = np.hstack([Y_predicted_high, x0_cqr_high])
+                Y_predicted_low = np.hstack([Y_predicted_low, x0_cqr_low])
+
+        # generating the plots
+        fig, ax = plt.subplots(n_x, figsize=(24, 6 * n_x))
+        fig.suptitle('CQR State plots')
+
+        # sorting according to timestamps
+        x = t_test.reshape(-1, )
+        sorted_indices = np.argsort(x)  # Get indices that would sort x
+        x_sorted = x[sorted_indices]
 
         # plot for each state
         for i in range(n_x):
 
-            # plot for each quantile
-            for j in range(n_q):
-                index = i + n_x * j
-                x = self.data['cqr_calibration_timestamps'].reshape(-1,)
-                y = Y_pred[index,:]
+            # plot the predicted mean
+            ax[i].plot(x_sorted, Y_predicted_mean[i, :][sorted_indices], label=f'predicted mean')
 
-                # Sort the data by x values
-                sorted_indices = np.argsort(x)  # Get indices that would sort x
-                x_sorted = x[sorted_indices]
-                y_sorted = y[sorted_indices]
+            # plot the real mean
+            ax[i].plot(x_sorted, Y_test[i, :][sorted_indices], label=f'real mean')
 
-                ax[i].plot(x_sorted, y_sorted, label=f'Quantile {quantiles[j]}')
+            # plotting cqr high side
+            ax[i].scatter(x_sorted, Y_predicted_high[i, :][sorted_indices], label=f'quantile={high_quantile}')
 
-        # plotting the mean states for each state
-        for i in range(n_x):
-            x = self.data['cqr_calibration_timestamps'].reshape(-1,)
-            y = self.data['cqr_calibration_errors'][i,:]
+            # plotting cqr low side
+            ax[i].scatter(x_sorted, Y_predicted_low[i, :][sorted_indices], label=f'quantile={low_quantile}')
 
-            # Sort the data by x values
-            sorted_indices = np.argsort(x)  # Get indices that would sort x
-            x_sorted = x[sorted_indices]
-            y_sorted = y[sorted_indices]
+            # plotting the shaded region
+            ax[i].fill_between(x_sorted, Y_predicted_high[i, :][sorted_indices], Y_predicted_low[i, :][sorted_indices],
+                             color='grey', alpha=0.5, label=f"Confidence= {1-alpha}")
 
-            ax[i].plot(x_sorted, y_sorted, label=f'real_mean')
-            ax[i].set_ylabel(f'State_{i})')
+            # extras
+            ax[i].set_ylabel(f'State {i}')
             ax[i].legend()
 
         # x label
@@ -1249,3 +1551,136 @@ class SurrogateCreator(torch.nn.Module):
 
         # end
         return None
+
+
+    def plot_qr_error(self):
+
+        assert self.flags['qr_ready'], "Qunatile regressor not ready."
+
+        # calculate the surrogate model error on cqr calibration data
+        self.data['cqr_calibration_errors'] = self.surrogate_error(cqr_train_inputs=self.data['cqr_calibration_inputs'],
+                                                                   cqr_train_outputs=self.data[
+                                                                       'cqr_calibration_outputs'])
+
+
+        # init
+        n_x = self.cqr['n_x']
+        n_q = self.cqr['n_q']
+        quantiles = self.cqr['quantiles']
+        low_quantile = self.cqr['low_quantile']
+        high_quantile = self.cqr['high_quantile']
+        n_a = 1
+
+        # setting default device
+        self._set_device(torch_device=self.cqr['cqr_model'].torch_device)
+
+        # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
+        X_narx = torch.tensor(self.data['cqr_calibration_inputs'].T, dtype=torch.float32)
+
+        # making prediction
+        with torch.no_grad():
+            Y_pred = self.cqr['cqr_model'](X_narx).cpu().numpy().T
+
+        # setting up plots
+        fig, ax = plt.subplots(n_x, figsize=(24, 6 * n_x))
+        fig.suptitle('QR Error plots')
+
+        # sorting with timestamps
+        x = self.data['cqr_calibration_timestamps'].reshape(-1, )
+        sorted_indices = np.argsort(x)  # Get indices that would sort x
+        x_sorted = x[sorted_indices]
+
+        # plot for each state
+        for i in range(n_x):
+            # plot the real mean
+            ax[i].plot(x_sorted, self.data['cqr_calibration_errors'][i, :][sorted_indices], label=f'real mean')
+
+            for j in range(n_q):
+
+                index = i + n_x*j
+
+                # plotting cqr high side
+                if j<n_a:
+                    ax[i].plot(x_sorted, Y_pred[index, :][sorted_indices], label=f'quantile={high_quantile}')
+
+                # plotting cqr low side
+                elif j>=n_a:
+                    ax[i].plot(x_sorted, Y_pred[index, :][sorted_indices], label=f'quantile={low_quantile}')
+
+            # extras
+            ax[i].set_ylabel(f'State Error {i}')
+            ax[i].legend()
+
+        # x label
+        ax[-1].set_xlabel(f'Time [s]')
+
+        # show plot
+        plt.show()
+
+        # end
+        return None
+
+    def random_state_mpc(self, model, n_horizon, r, suppress_ipopt=True):
+
+        # init
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order =self.data['order']
+        narx_state_length = order * n_x + (order - 1) * n_u
+
+        # states of system
+        x = model.x["system_state"][0:n_x]
+        x_ref = model.tvp['state_ref']
+
+        # generating mpc class
+        mpc = do_mpc.controller.MPC(model)
+
+        # supperess ipopt output
+        if suppress_ipopt:
+            mpc.settings.supress_ipopt_output()
+
+        # set t_step
+        mpc.set_param(t_step=self.data['t_step'])
+
+        # set horizon
+        mpc.set_param(n_horizon=n_horizon)
+
+        # setting up cost function
+        mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
+
+        # passing objective function
+        mpc.set_objective(mterm=mterm, lterm=0*mterm)
+
+        # input penalisation
+        mpc.set_rterm(system_input=r)
+
+        # setting up boundaries for mpc: lower bound for states
+        lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.nan)])
+        mpc.bounds['lower', '_x', 'system_state'] = lbx
+
+        # upper bound for states
+        ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.nan)])
+        mpc.bounds['upper', '_x', 'system_state'] = ubx
+
+        # lower bound for inputs
+        mpc.bounds['lower', '_u', 'system_input'] = self.data['lbu'].reshape(-1,1)
+
+        # upper bound for inputs
+        mpc.bounds['upper', '_u', 'system_input'] = self.data['ubu'].reshape(-1,1)
+
+        # enter random setpoints inside the box constraints
+        tvp_template = mpc.get_tvp_template()
+
+        # sending random setpoints inside box constraints
+        def tvp_fun(t_ind):
+            ref = np.random.uniform(self.data['lbx'], self.data['ubx']).reshape((-1,1))
+            tvp_template['_tvp', :, 'state_ref'] = ref
+            return tvp_template
+
+        mpc.set_tvp_fun(tvp_fun)
+
+        # setup
+        mpc.setup()
+
+        # end
+        return mpc

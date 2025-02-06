@@ -62,7 +62,17 @@ Should I keep the current QR training where we train individually each regressor
 What is mod(I2)?? Page 6 of reghu paper 6
 
 
+# Week 3 (27/01/2025)
+
+## query
+1. do we do the calculations for only one miss coverage value(alpha). That means only one pair 
+2. np.quantile(arr, 0.7) computes the value below which 70% of the data falls. 
+If the 0.7th quantile lies between two data points, linear interpolation is used by default.
+3. 
+
+
 ## open points
+1. big red flag with reshpe! Reshpae is first filling individaul rows. I want it to first fill up columns.
 
 Scale data (standard scaling or min max scaling) before training.
 

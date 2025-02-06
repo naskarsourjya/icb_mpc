@@ -34,7 +34,16 @@ su.narx_trainer(hidden_layers=[10], batch_size=320,
 
 #print(su.simulator_make_step(u0=np.array([[0.9]])))
 
-su.train_individual_cqr(miss_coverage=[0.1], hidden_layers=[10], batch_size=320,
+su.train_individual_qr(alpha=0.1, hidden_layers=[10], batch_size=320,
              train_threshold=1e-7, epochs=1000, scheduler_flag=True)
-su.plot_cqr_training_history()
-su.plot_qr_temp()
+#su.plot_qr_training_history()
+#su.plot_qr_error()
+su.conform_qr()
+#su.cqr_set_initial_guess(states=np.array([[0.1, 0.2, 0.3],
+#                               [0.4, 0.5, 0.6]]),
+#              inputs=np.array([[0.7, 0.8]]))
+
+#print(su.cqr_make_step(u0=np.array([[0.9]])))
+#su.plot_cqr_error()
+model, simulator = su.narx_2_dompc()
+su.random_state_mpc(model=model, n_horizon=10, r=0.1)

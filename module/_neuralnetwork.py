@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
+
+
 class Regressor(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, device = 'auto'):
+    def __init__(self, input_size, output_size, hidden_layers, device='auto'):
         super(Regressor, self).__init__()
 
         # set device
-        self._set_device(device= device)
+        self._set_device(device=device)
 
         # Build the neural network dynamically based on the number of layers
         layers = []
@@ -28,16 +30,12 @@ class Regressor(nn.Module):
         # Combine all layers
         self.network = nn.Sequential(*layers)
 
-        # end
-        return None
+        # stores number of parameters
+        self.n_params = self.count_parameters()
+
+        # end of init
 
     def forward(self, x):
-        """
-        Forward pass for NARX model.
-        states: Tensor of states (batch_size, n_x*order)
-        inputs: Tensor of inputs (batch_size, n_u*order)
-        """
-        #x = torch.cat([states, inputs], dim=1)  # Concatenate input and output lags
 
         # returns current state
         return self.network(x)
@@ -65,7 +63,7 @@ class Regressor(nn.Module):
 
 
 class MergedModel(nn.Module):
-    def __init__(self, models, device = 'auto'):
+    def __init__(self, models, device='auto'):
         """
         Initializes the MergedModel with a list of models.
 
@@ -81,8 +79,11 @@ class MergedModel(nn.Module):
         self.model_list = models
         self.models = nn.ModuleList(models)
 
-        # end
-        return None
+        self.n_params = 0
+        for model in models:
+            self.n_params += model.n_params
+
+        # end of init
 
     def forward(self, x):
         """
