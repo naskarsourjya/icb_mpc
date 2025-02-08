@@ -8,10 +8,13 @@ from tqdm import tqdm
 from ._springsystem import *
 from ._neuralnetwork import *
 from sklearn.model_selection import train_test_split
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-class SurrogateCreator(torch.nn.Module):
+
+class SurrogateCreator():
     def __init__(self, set_seed = None):
-        super(SurrogateCreator, self).__init__()
+        #super(SurrogateCreator, self).__init__()
 
         # for repetable results
         if set_seed is not None:
@@ -23,6 +26,10 @@ class SurrogateCreator(torch.nn.Module):
         self.narx = {}
         self.surrogate = {}
         self.cqr = {}
+
+        # plottting row size
+        self.height_px = 700
+        self.width_px = 1800
 
         # generating flags
         self.flags = {
@@ -488,11 +495,7 @@ class SurrogateCreator(torch.nn.Module):
         # store model
         self.narx['model'] = narx_model
         self.narx['hidden_layers'] = hidden_layers
-        self.narx['training_loss'] = train_history['training_loss']
-        self.narx['validation_loss'] = train_history['validation_loss']
-        self.narx['epochs'] = train_history['epochs']
-        self.narx['learning_rate'] = train_history['learning_rate']
-
+        self.narx['train_history'] = train_history
         # flag update
         self.flags.update({
             'narx_ready': True,
@@ -574,7 +577,7 @@ class SurrogateCreator(torch.nn.Module):
         return None
 
 
-    @torch.no_grad()
+    #@torch.no_grad()
     def narx_make_step(self, states, inputs):
         assert self.flags['narx_ready'] == True, 'NARX model not found. Generate or load NARX model!'
 
@@ -605,8 +608,8 @@ class SurrogateCreator(torch.nn.Module):
         #narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
         X = torch.tensor(narx_input.T, dtype=torch.float32)
         #X_set = torch.utils.data.TensorDataset(X)
-
-        Y_pred = self.narx['model'](X).cpu().numpy().T
+        with torch.no_grad():
+            Y_pred = self.narx['model'](X).cpu().numpy().T
 
         return Y_pred
 
@@ -1462,96 +1465,6 @@ class SurrogateCreator(torch.nn.Module):
         # return predictions
         return x0, x0_cqr_high, x0_cqr_low
 
-    def plot_cqr_error(self):
-        assert self.flags['qr_ready'], "Qunatile regressor not ready."
-        assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
-
-        # extracting data
-        X_test = self.data['test_inputs']
-        Y_test = self.data['test_outputs']
-        t_test = self.data['test_timestamps']
-
-        # init
-        order = self.cqr['order']
-        n_x = self.cqr['n_x']
-        n_u = self.cqr['n_u']
-        low_quantile = self.cqr['low_quantile']
-        high_quantile = self.cqr['high_quantile']
-        n_samples = X_test.shape[1]
-        alpha = self.cqr['alpha']
-
-
-
-        # calculating model intervals
-        for i in tqdm(range(n_samples), desc='Calculating surrogate model state intervals'):
-
-            # extracting individual state and input histories
-            states_history = X_test[0:n_x*order, i]
-            inputs_n = X_test[n_x*order:, i]
-            u0 = inputs_n[0:n_u]
-            inputs_history = inputs_n[n_u:]
-
-            # simulating system
-            if order>1:
-                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
-                                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
-                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
-            else:
-                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
-                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
-
-            # storage
-            if i==0:
-                Y_predicted_mean = x0
-                Y_predicted_high = x0_cqr_high
-                Y_predicted_low = x0_cqr_low
-
-            else:
-                Y_predicted_mean = np.hstack([Y_predicted_mean, x0])
-                Y_predicted_high = np.hstack([Y_predicted_high, x0_cqr_high])
-                Y_predicted_low = np.hstack([Y_predicted_low, x0_cqr_low])
-
-        # generating the plots
-        fig, ax = plt.subplots(n_x, figsize=(24, 6 * n_x))
-        fig.suptitle('CQR State plots')
-
-        # sorting according to timestamps
-        x = t_test.reshape(-1, )
-        sorted_indices = np.argsort(x)  # Get indices that would sort x
-        x_sorted = x[sorted_indices]
-
-        # plot for each state
-        for i in range(n_x):
-
-            # plot the predicted mean
-            ax[i].plot(x_sorted, Y_predicted_mean[i, :][sorted_indices], label=f'predicted mean')
-
-            # plot the real mean
-            ax[i].plot(x_sorted, Y_test[i, :][sorted_indices], label=f'real mean')
-
-            # plotting cqr high side
-            ax[i].scatter(x_sorted, Y_predicted_high[i, :][sorted_indices], label=f'quantile={high_quantile}')
-
-            # plotting cqr low side
-            ax[i].scatter(x_sorted, Y_predicted_low[i, :][sorted_indices], label=f'quantile={low_quantile}')
-
-            # plotting the shaded region
-            ax[i].fill_between(x_sorted, Y_predicted_high[i, :][sorted_indices], Y_predicted_low[i, :][sorted_indices],
-                             color='grey', alpha=0.5, label=f"Confidence= {1-alpha}")
-
-            # extras
-            ax[i].set_ylabel(f'State {i}')
-            ax[i].legend()
-
-        # x label
-        ax[-1].set_xlabel(f'Time [s]')
-
-        # show plot
-        plt.show()
-
-        # end
-        return None
-
 
     def plot_qr_error(self):
 
@@ -1620,6 +1533,347 @@ class SurrogateCreator(torch.nn.Module):
         # end
         return None
 
+
+    def plot_cqr_error(self):
+        assert self.flags['qr_ready'], "Qunatile regressor not ready."
+        assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
+
+        # extracting data
+        X_test = self.data['test_inputs']
+        Y_test = self.data['test_outputs']
+        t_test = self.data['test_timestamps']
+
+        # init
+        order = self.cqr['order']
+        n_x = self.cqr['n_x']
+        n_u = self.cqr['n_u']
+        low_quantile = self.cqr['low_quantile']
+        high_quantile = self.cqr['high_quantile']
+        n_samples = X_test.shape[1]
+        alpha = self.cqr['alpha']
+
+
+
+        # calculating model intervals
+        for i in tqdm(range(n_samples), desc='Calculating surrogate model state intervals'):
+
+            # extracting individual state and input histories
+            states_history = X_test[0:n_x*order, i]
+            inputs_n = X_test[n_x*order:, i]
+            u0 = inputs_n[0:n_u]
+            inputs_history = inputs_n[n_u:]
+
+            # simulating system
+            if order>1:
+                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
+                                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
+                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+            else:
+                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
+                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+
+            # storage
+            if i==0:
+                Y_predicted_mean = x0
+                Y_predicted_high = x0_cqr_high
+                Y_predicted_low = x0_cqr_low
+
+            else:
+                Y_predicted_mean = np.hstack([Y_predicted_mean, x0])
+                Y_predicted_high = np.hstack([Y_predicted_high, x0_cqr_high])
+                Y_predicted_low = np.hstack([Y_predicted_low, x0_cqr_low])
+
+        # generating the plots
+        fig, ax = plt.subplots(n_x, figsize=(24, 6 * n_x))
+        fig.suptitle('CQR State plots')
+
+        # sorting according to timestamps
+        x = t_test.reshape(-1, )
+        sorted_indices = np.argsort(x)  # Get indices that would sort x
+        x_sorted = x[sorted_indices]
+
+        # plot for each state
+        for i in range(n_x):
+
+            # plot the predicted mean
+            ax[i].plot(x_sorted, Y_predicted_mean[i, :][sorted_indices], label=f'predicted mean', color='blue')
+
+            # plot the real mean
+            ax[i].plot(x_sorted, Y_test[i, :][sorted_indices], label=f'real mean', color='orange')
+
+            # plotting cqr high side
+            ax[i].scatter(x_sorted, Y_predicted_high[i, :][sorted_indices], label=f'quantile={high_quantile}',
+                          color='green')
+
+            # plotting cqr low side
+            ax[i].scatter(x_sorted, Y_predicted_low[i, :][sorted_indices], label=f'quantile={low_quantile}',
+                          color='purple')
+
+            # plotting the shaded region
+            ax[i].fill_between(x_sorted, Y_predicted_high[i, :][sorted_indices], Y_predicted_low[i, :][sorted_indices],
+                             color='grey', alpha=0.5, label=f"Confidence= {1-alpha}")
+
+            # extras
+            ax[i].set_ylabel(f'State {i}')
+            ax[i].legend()
+
+        # x label
+        ax[-1].set_xlabel(f'Time [s]')
+
+        # show plot
+        plt.show()
+
+        # end
+        return None
+
+    # Function to plot CQR error using Plotly
+    def plot_cqr_error_plotly(self):
+        assert self.flags['qr_ready'], "Quantile regressor not ready."
+        assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
+
+        # Extracting data
+        X_test = self.data['test_inputs']
+        Y_test = self.data['test_outputs']
+        t_test = self.data['test_timestamps']
+
+        # Init
+        order = self.cqr['order']
+        n_x = self.cqr['n_x']
+        n_u = self.cqr['n_u']
+        low_quantile = self.cqr['low_quantile']
+        high_quantile = self.cqr['high_quantile']
+        n_samples = X_test.shape[1]
+        alpha = self.cqr['alpha']
+
+        # Calculating model intervals
+        for i in tqdm(range(n_samples), desc='Calculating surrogate model state intervals'):
+            states_history = X_test[0:n_x * order, i]
+            inputs_n = X_test[n_x * order:, i]
+            u0 = inputs_n[0:n_u]
+            inputs_history = inputs_n[n_u:]
+
+            if order > 1:
+                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
+                                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
+                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+            else:
+                self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
+                x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+
+            if i == 0:
+                Y_predicted_mean = x0
+                Y_predicted_high = x0_cqr_high
+                Y_predicted_low = x0_cqr_low
+            else:
+                Y_predicted_mean = np.hstack([Y_predicted_mean, x0])
+                Y_predicted_high = np.hstack([Y_predicted_high, x0_cqr_high])
+                Y_predicted_low = np.hstack([Y_predicted_low, x0_cqr_low])
+
+        # Sorting according to timestamps
+        x = t_test.reshape(-1, )
+        sorted_indices = np.argsort(x)
+        x_sorted = x[sorted_indices]
+
+        # Create subplots
+        fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True, subplot_titles=[f'State {i+1}' for i in range(n_x)])
+        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="CQR State Plots", showlegend=True)
+
+        # Loop through each state
+        for i in range(n_x):
+            # Predicted mean line (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=x_sorted, y=Y_predicted_mean[i, sorted_indices],
+                                     mode='lines', name=f'Predicted Mean',
+                                     line=dict(color='blue'),
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            # Real mean line (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=x_sorted, y=Y_test[i, sorted_indices],
+                                     mode='lines', name=f'Real Mean',
+                                     line=dict(color='orange'),
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            # CQR High quantile (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=x_sorted, y=Y_predicted_high[i, sorted_indices],
+                                     mode='markers', name=f'High Quantile={high_quantile}',
+                                     marker=dict(color='green', size=6),
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            # CQR Low quantile (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=x_sorted, y=Y_predicted_low[i, sorted_indices],
+                                     mode='markers', name=f'Low Quantile={low_quantile}',
+                                     marker=dict(color='purple', size=6),
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            # Shaded confidence interval (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=np.concatenate((x_sorted, x_sorted[::-1])),
+                                     y=np.concatenate((Y_predicted_high[i, sorted_indices],
+                                                       Y_predicted_low[i, sorted_indices][::-1])),
+                                     fill='toself', fillcolor='rgba(128, 128, 128, 0.5)',
+                                     line=dict(color='rgba(255,255,255,0)'),
+                                     name=f'Confidence {1 - alpha}',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+        # Update layout
+        fig.update_xaxes(title_text="Sample [s]", row=n_x, col=1)
+
+        # Show plot
+        fig.show()
+        return None
+
+    def plot_qr_training_history_plotly(self):
+        assert self.flags['qr_ready'] == True, 'CQR not found! Generate or load CQR model!'
+
+
+        if self.cqr['type'] == 'individual':
+
+            n_q = self.cqr['n_q']
+            quantiles = self.cqr['quantiles']
+            # Create subplots with secondary_y set in column 2
+            specs = [[{}, {"secondary_y": True}] for _ in quantiles]
+
+            # plot init
+            fig = make_subplots(
+                rows=n_q, cols=2,
+                shared_xaxes=True,
+                subplot_titles=['Learning rate', 'Loss'],
+                specs=specs,
+                # Enable secondary y-axis in column 2
+                row_heights=[0.5] * n_q,  # Adjust row heights for better layout
+                column_widths=[1] * 2
+            )
+
+            # updating layout
+            fig.update_layout(title_text='Individual CQR Training History',
+                              height=self.height_px * n_q, width=self.width_px)
+
+            # making plots
+            for i, quantile in enumerate(quantiles):
+                # Extracting history
+                training_history = self.cqr['train_history_list'][i]
+
+                # Plot 1: Learning Rate (left column)
+                fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['learning_rate'],
+                                         mode='lines', line=dict(color='red'),
+                                         name='learning rate',
+                                         showlegend=False),
+                              row=i + 1, col=1)
+                fig.update_yaxes(type='log', title_text=f'CQR (q={quantile})\nLearning Rate', row=i + 1, col=1)
+                fig.update_xaxes(title_text='epochs', row=i + 1, col=1)
+
+                # Plot 2: Training Loss (primary y-axis in right column)
+                fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['training_loss'],
+                                         mode='lines', line=dict(color='green'),
+                                         name='training loss',
+                                         showlegend=True if i == 0 else False),
+                              row=i + 1, col=2)
+                fig.update_yaxes(type='log', title_text=f'CQR (q={quantile})\nTraining Loss', row=i + 1, col=2)
+
+                # Validation Loss (secondary y-axis in right column)
+                fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['validation_loss'],
+                                         mode='lines', line=dict(color='blue'),
+                                         name = 'validation loss',
+                                         showlegend=True if i == 0 else False),
+                              row=i + 1, col=2, secondary_y=True)
+                fig.update_yaxes(title_text=f'CQR (q={quantile})\nValidation Loss', type='log',
+                                 row=i + 1, col=2, secondary_y=True)
+                fig.update_xaxes(title_text='epochs', row=i + 1, col=2)
+
+            fig.show()
+
+        elif self.cqr['type'] == 'all':
+            # Create subplots with secondary_y set in row 2
+            fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                subplot_titles=['Loss History', 'Learning Rate'],
+                specs=[[{"secondary_y": True}], [{"secondary_y": False}]]  # Enable secondary y-axis only in row 2
+            )
+
+            fig.update_layout(title_text='All CQR Training History', height=self.height_px, width=self.width_px)
+
+            # Extracting history
+            training_history = self.cqr['train_history_list'][0]
+
+            # Plot 1: Training Loss (primary y-axis in row 1)
+            fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['training_loss'],
+                                     mode='lines', line=dict(color='green'),
+                                     name=f'training loss',
+                                     showlegend=True),
+                          row=1, col=1)
+            fig.update_yaxes(type='log', title_text='Training Loss', row=1, col=1)
+
+            # Validation Loss (secondary y-axis in row 1)
+            fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['validation_loss'],
+                                     mode='lines', line=dict(color='red'),
+                                     name=f'validation loss',
+                                     showlegend=True),
+                          row=1, col=1, secondary_y=True)
+            fig.update_yaxes(title_text='Validation Loss', type='log', row=1, col=1, secondary_y=True)
+            fig.update_xaxes(title_text='epochs', row=1, col=1)
+
+            # Plot 2: Learning Rate (row 2)
+            fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['learning_rate'],
+                                     mode='lines', line=dict(color='blue'),
+                                     showlegend=False),
+                          row=2, col=1)
+            fig.update_yaxes(type='log', title_text='Learning Rate', row=2, col=1)
+            fig.update_xaxes(title_text='epochs', row=2, col=1)
+
+            fig.show()
+
+        return None
+
+
+    def plot_narx_training_history_plotly(self):
+        assert self.flags['narx_ready'] == True, \
+            'NARX not found! Generate or load NARX model!'
+
+        # Create subplots with secondary_y set in row 2
+        fig = make_subplots(
+            rows=2, cols=1, shared_xaxes=True,
+            subplot_titles=['Loss History', 'Learning Rate'],
+            specs=[[{"secondary_y": True}], [{"secondary_y": False}]]  # Enable secondary y-axis only in row 2
+        )
+
+        fig.update_layout(title_text='NARX Training History', height=self.height_px, width=self.width_px)
+
+        # Extracting history
+        train_history = self.narx['train_history']
+
+        # Plot 1: Training Loss (primary y-axis in row 1)
+        fig.add_trace(go.Scatter(x=train_history['epochs'], y=train_history['training_loss'],
+                                 mode='lines', line=dict(color='green'),
+                                 name=f'training loss',
+                                 showlegend=True),
+                      row=1, col=1)
+        fig.update_yaxes(type='log', title_text='Training Loss', row=1, col=1)
+
+        # Validation Loss (secondary y-axis in row 1)
+        fig.add_trace(go.Scatter(x=train_history['epochs'], y=train_history['validation_loss'],
+                                 mode='lines', line=dict(color='red'),
+                                 name=f'validation loss',
+                                 showlegend=True),
+                      row=1, col=1, secondary_y=True)
+        fig.update_yaxes(title_text='Validation Loss', type='log', row=1, col=1, secondary_y=True)
+        fig.update_xaxes(title_text='epochs', row=1, col=1)
+
+        # Plot 2: Learning Rate (row 2)
+        fig.add_trace(go.Scatter(x=train_history['epochs'], y=train_history['learning_rate'],
+                                 mode='lines', line=dict(color='blue'),
+                                 showlegend=False),
+                      row=2, col=1)
+        fig.update_yaxes(type='log', title_text='Learning Rate', row=2, col=1)
+        fig.update_xaxes(title_text='epochs', row=2, col=1)
+
+        fig.show()
+
+        # end
+        return None
+
     def random_state_mpc(self, model, n_horizon, r, suppress_ipopt=True):
 
         # init
@@ -1682,5 +1936,48 @@ class SurrogateCreator(torch.nn.Module):
         # setup
         mpc.setup()
 
+        # storage
+        self.surrogate['random_state_mpc'] = mpc
+
         # end
         return mpc
+
+    def random_state_mpc_initial_guess(self):
+
+
+        return None
+
+
+    def run_iterations(self, iter, n_horizon, r):
+
+        # init
+        model, simulator = self.narx_2_dompc()
+        mpc = self.random_state_mpc(model=model, n_horizon=n_horizon, r=r)
+
+
+
+
+        return None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
