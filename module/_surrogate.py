@@ -26,6 +26,7 @@ class SurrogateCreator():
         self.narx = {}
         self.surrogate = {}
         self.cqr = {}
+        self.mpc={}
 
         # plottting row size
         self.height_px = 700
@@ -41,7 +42,10 @@ class SurrogateCreator():
             'surrogate_initial_condition_ready': False,
             'qr_ready': False,
             'cqr_ready': False,
-            'cqr_initial_condition_ready': False
+            'cqr_initial_condition_ready': False,
+            'mpc_ready': False,
+            'mpc_initial_condition_ready': False,
+            'simulation_ready': False
         }
 
         # end of init
@@ -1001,6 +1005,7 @@ class SurrogateCreator():
         self.cqr['n_u'] = self.data['n_u']
         self.cqr['n_y'] = self.data['n_y']
         self.cqr['n_q'] = n_q
+        self.cqr['t_step'] = self.data['t_step']
         self.cqr['type'] = 'individual'
 
         # flag update
@@ -1144,6 +1149,7 @@ class SurrogateCreator():
         self.cqr['n_u'] = self.data['n_u']
         self.cqr['n_y'] = self.data['n_y']
         self.cqr['n_q'] = n_q
+        self.cqr['t_step'] = self.data['t_step']
         self.cqr['type'] = 'all'
 
         # flag update
@@ -1320,6 +1326,7 @@ class SurrogateCreator():
 
         # storage
         self.cqr['Q1_alpha'] = Q1_alpha
+        self.cqr['history'] = None
 
         # update flag
         self.flags.update({
@@ -1461,6 +1468,29 @@ class SurrogateCreator():
 
         else:
             self.cqr_set_initial_guess(states=self.reshape(new_states, shape=(n_x, -1)))
+
+        # storing simulation history
+        if self.cqr['history']==None:
+            history = {}
+            history['x0'] =x0
+            history['x0_cqr_high'] = x0_cqr_high
+            history['x0_cqr_low'] = x0_cqr_low
+            history['time'] = [0.0]
+            history['u0'] = u0
+
+            self.cqr['history'] = history
+
+        else:
+            history = self.cqr['history']
+
+            history['x0'] = np.hstack([history['x0'], x0])
+            history['x0_cqr_high'] = np.hstack([history['x0_cqr_high'], x0_cqr_high])
+            history['x0_cqr_low'] = np.hstack([history['x0_cqr_low'], x0_cqr_low])
+            history['time'].append(history['time'][-1] + self.cqr['t_step'])
+            history['u0'] = np.hstack([history['u0'], u0])
+
+            self.cqr['history'] = history
+
 
         # return predictions
         return x0, x0_cqr_high, x0_cqr_low
@@ -1909,11 +1939,11 @@ class SurrogateCreator():
         mpc.set_rterm(system_input=r)
 
         # setting up boundaries for mpc: lower bound for states
-        lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.nan)])
+        lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.inf)])
         mpc.bounds['lower', '_x', 'system_state'] = lbx
 
         # upper bound for states
-        ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.nan)])
+        ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.inf)])
         mpc.bounds['upper', '_x', 'system_state'] = ubx
 
         # lower bound for inputs
@@ -1937,28 +1967,241 @@ class SurrogateCreator():
         mpc.setup()
 
         # storage
-        self.surrogate['random_state_mpc'] = mpc
+        self.mpc['random_state_mpc'] = mpc
+        self.mpc['order'] = order
+        self.mpc['n_x'] = n_x
+        self.mpc['n_u'] = n_u
+        self.mpc['t_step'] = self.data['t_step']
+
+        # flag update
+        self.flags.update({
+            'mpc_ready': True,
+        })
 
         # end
         return mpc
 
-    def random_state_mpc_initial_guess(self):
+    def random_state_mpc_initial_guess(self, states, inputs=None):
+        assert self.flags['mpc_ready'], "MPC not found! Generate MPC controller."
 
+        assert states.shape[1] == self.mpc['order'], \
+            'Number of samples must be equal to the order of the NARX model!'
 
-        return None
+        assert states.shape[0] == self.mpc['n_x'], (
+            'Expected number of states is: {}, but found {}'.format(self.mpc['n_x'], states.shape[0]))
 
+        if self.mpc['order']>1:
+            assert isinstance(inputs, np.ndarray), "If order is more than 1, then input is needed!"
 
-    def run_iterations(self, iter, n_horizon, r):
+            assert states.shape[1] - 1 == inputs.shape[1], \
+                'Number of samples for states should exceed that of inputs by one!'
+
+            assert inputs.shape[0] == self.mpc['n_u'], (
+                'Expected number of inputs is: {}, but found {}'.format(self.mpc['n_u'], inputs.shape[0]))
+
+        order = self.mpc['order']
+        state_order = order
+        input_order = order - 1
+
+        state_samples = states.shape[1]
+        input_samples = inputs.shape[1]
+
+        # ensuring this is the current input
+        # stacking states and inputs with order
+        order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
+
+        # if order is 2 or more, only then previous inputs are needed
+        if order > 1:
+            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
+
+            # stacking states and inputs for narx model
+            initial_cond = np.vstack([order_states, order_inputs])
+
+        else:
+            initial_cond = order_states
+
+        # passing initial cond
+        self.mpc['random_state_mpc'].x0 = initial_cond
+        self.mpc['random_state_mpc'].set_initial_guess()
+
+        # storage
+        self.mpc['initial_cond'] = initial_cond
+        self.mpc['history'] = None
+
+        # flag update
+        self.flags.update({
+            'mpc_initial_condition_ready': True,
+        })
+
+        # end
+        return
+
+    def mpc_make_step(self, x0):
+
+        assert self.flags['mpc_ready'], "MPC not found! Generate MPC controller."
+        assert self.flags['mpc_initial_condition_ready'], "MPC not initialised! Initialise MPC."
+        assert x0.shape==(self.mpc['n_x'], 1), \
+            f"x0 should have shape ({self.mpc['n_x']}, 1). Shape found instead is: {x0.shape}"
 
         # init
+        initial_cond = self.mpc['initial_cond']
+        n_x = self.mpc['n_x']
+        n_u = self.mpc['n_u']
+        order = self.mpc['order']
+
+        # segregating states and inputs
+        states = initial_cond[0:n_x * order, :]
+        inputs = initial_cond[n_x * order:, :]
+
+        # stacking current state
+        x_next = np.vstack([x0, states[0:n_x * (order - 1)], inputs])
+
+        # determining optimal input
+        u0 = self.mpc['random_state_mpc'].make_step(x0=x_next)
+
+        # shifitng initial condition
+        next_state_history = np.vstack([x0, states[0:n_x * (order - 1)]])
+        next_input_history = np.vstack([u0, inputs[n_u:]])
+
+        # pushing it to class
+        self.random_state_mpc_initial_guess(states=self.reshape(next_state_history, shape=(n_x, -1)),
+                                            inputs=self.reshape(next_input_history, shape=(n_u, -1)))
+
+        # end
+        return u0
+
+
+    def run_simulation(self, iter, n_horizon, r):
+
+        assert self.flags['qr_ready'], "Quantile regressor not ready."
+        assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
+
+        # init
+        narx_inputs = self.data['test_inputs']
+        #narx_outputs = self.data['test_outputs']
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+
+
+        # system init
         model, simulator = self.narx_2_dompc()
         mpc = self.random_state_mpc(model=model, n_horizon=n_horizon, r=r)
 
+        # take initial guess from test data
+        rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
 
+        # extracting random column
+        states_history = narx_inputs[0:n_x * order, rnd_col]
+        inputs_n = narx_inputs[n_x * order:, rnd_col]
+        u0 = inputs_n[0:n_u]
+        inputs_history = inputs_n[n_u:]
 
+        if order > 1:
+            # set initial guess for surrogate simulator
+            self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
+                                       inputs=self.reshape(inputs_history, shape=(n_u, -1)))
+            self.random_state_mpc_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
+                                                inputs=self.reshape(inputs_history, shape=(n_u, -1)))
+
+        else:
+            self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
+            self.random_state_mpc_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
+
+        # staring with current state
+        x0 = self.reshape(states_history[0:n_x], shape=(n_x, 1))
+
+        # run the main loop
+        for _ in range(iter):
+            u0 = self.mpc_make_step(x0)
+            x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0)
+
+        # flag update
+        self.flags.update({
+                'simulation_ready': True,
+            })
 
         return None
 
+
+    def plot_simulation(self):
+        assert self.flags['simulation_ready'], "Simulation results not found! Run simulation first."
+
+        # init
+        history = self.cqr['history']
+        n_x = self.cqr['n_x']
+        n_u = self.cqr['n_u']
+        alpha = self.cqr['alpha']
+        high_quantile = self.cqr['high_quantile']
+        low_quantile = self.cqr['low_quantile']
+
+
+        #history['x0']
+        #history['x0_cqr_high']
+        #history['x0_cqr_low']
+        #history['time']
+        #history['u0']
+
+
+        # Create subplots
+        state_names = [f'State {i + 1}' for i in range(n_x)]
+        input_names = [f'Input {i + 1}' for i in range(n_u)]
+        fig = make_subplots(rows=n_x+n_u, cols=1, shared_xaxes=True, subplot_titles=state_names+input_names)
+        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="CQR State Plots",
+                          showlegend=True)
+
+        # Loop through each state
+        for i in range(n_x):
+
+            # Predicted mean line (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=history['time'], y=history['x0'][i, :],
+                                     mode='lines', name=f'Predicted Mean',
+                                     line=dict(color='blue'),
+                                     showlegend=True if i==0 else False),
+                          row=i + 1, col=1)
+
+
+            # CQR High quantile (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=history['time'], y=history['x0_cqr_high'][i, :],
+                                     mode='markers', name=f'High Quantile={high_quantile}',
+                                     marker=dict(color='green', size=6),
+                                     showlegend= True if i==0 else False),
+                          row=i + 1, col=1)
+
+            # CQR Low quantile (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=history['time'], y=history['x0_cqr_low'][i, :],
+                                     mode='markers', name=f'Low Quantile={low_quantile}',
+                                     marker=dict(color='purple', size=6),
+                                     showlegend=True if i==0 else False),
+                          row=i + 1, col=1)
+
+            # Shaded confidence interval (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=np.concatenate((history['time'], history['time'][::-1])),
+                                     y=np.concatenate((history['x0_cqr_high'][i, :],
+                                                       history['x0_cqr_low'][i, :][::-1])),
+                                     fill='toself', fillcolor='rgba(128, 128, 128, 0.5)',
+                                     line=dict(color='rgba(255,255,255,0)'),
+                                     name=f'Confidence {1 - alpha}',
+                                     showlegend= True if i==0 else False),
+                          row=i + 1, col=1)
+
+            # Update layout
+            fig.update_xaxes(title_text="Time [s]", row=i + 1, col=1)
+
+        for j in range(n_u):
+            # Predicted mean line (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=history['time'], y=history['u0'][j, :],
+                                     mode='lines', name=f'Predicted Mean',
+                                     line=dict(color='blue'),
+                                     showlegend= True if i==0 else False),
+                          row= n_x+j+1, col=1)
+
+            # Update layout
+            fig.update_xaxes(title_text="Time [s]", row=n_x+j+1, col=1)
+
+        # Show plot
+        fig.show()
+        return None
 
 
 
