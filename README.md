@@ -78,6 +78,8 @@ Scale data (standard scaling or min max scaling) before training.
 
 Look up soruce no 12 from reghu paper
 
+Use surrogate mpc to control the real system
+
 # List of hyperparameters
 1. number of layers for narx
 2. number of nodes for narx
