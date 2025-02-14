@@ -4,7 +4,7 @@ import do_mpc
 class mpc_narx(do_mpc.controller.MPC):
     def __init__(self, model, order, n_x, n_u):
 
-
+        # sanity check
         assert order >= 1, "Order has to be a finite positive integer more than or equal to 1."
 
         # storage
@@ -96,9 +96,6 @@ class mpc_narx(do_mpc.controller.MPC):
         self.initial_cond = initial_cond
 
         return initial_cond
-
-
-
 
 
     def narx_set_initial_guess(self):
