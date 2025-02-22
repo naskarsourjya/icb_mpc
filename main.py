@@ -41,13 +41,14 @@ dm.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320,
 #su.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320)
 #su.cqr.plot_qr_training_history_plotly()
 #su.cqr_plot_qr_error()
-#su.cqr_plot_cqr_error_plotly()
+#dm.plot_cqr_error_plotly()
 #su.cqr_set_initial_guess(states=np.array([[0.1, 0.2, 0.3],
 #                               [0.4, 0.5, 0.6]]),
 #              inputs=np.array([[0.7, 0.8]]))
 
 #print(su.cqr_make_step(u0=np.array([[0.9]])))
 #su.plot_cqr_error_plotly()
-dm.run_simulation(system=spring_system, iter=50, n_horizon=10, r=0.01)
-dm.plot_simulation()
+dm.run_simulation(system=spring_system, iter=2, n_horizon=10, r=0.01)
+dm.cqr.plot_branch()
+#dm.plot_simulation()
 

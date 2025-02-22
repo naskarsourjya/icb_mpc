@@ -38,6 +38,18 @@ class narx():
 
 
     def _set_device(self, torch_device):
+        """
+        Set the default device for the NARX model.
+
+        Parameters
+        ----------
+        torch_device : str
+            Device to be used for computation. Can be 'cpu' or 'cuda'.
+        
+        Returns
+        -------
+        None
+        """
 
         torch.set_default_device(torch_device)
 
@@ -45,6 +57,21 @@ class narx():
 
 
     def reshape(self, array, shape):
+        """
+        Reshape the array to the desired shape.
+
+        Parameters
+        ----------
+        array : numpy.array
+            Array to be reshaped.
+        shape : tuple
+            Desired shape of the array.
+
+        Returns
+        -------
+        numpy.array
+            Reshaped array.
+        """
 
         # rows and columns
         rows, cols = shape

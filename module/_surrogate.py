@@ -238,35 +238,35 @@ class Surrogate():
             'Surrogate model initial condition not set! Set initial condition!'
 
         # init
-        x0 = self.initial_cond
-        n_x = self.n_x
-        order = self.order
+        #initial_cond = self.initial_cond
+        #n_x = self.n_x
+        #order = self.order
 
-        # segregating states and inputs
-        states = x0[0:n_x * order, :]
-        inputs = x0[n_x * order:, :]
+        ## segregating states and inputs
+        #states = initial_cond[0:n_x * order, :]
+        #inputs = initial_cond[n_x * order:, :]
 
         x_full = self.simulator.make_step(u0=u0)
 
         x0 = x_full[0:self.n_x,]
 
-        # pushing oldest state out of system and inserting the current state
-        new_states = np.vstack([x0, states[0:(self.order - 1) * self.n_x, :]])
+        ## pushing oldest state out of system and inserting the current state
+        #new_states = np.vstack([x0, states[0:(self.order - 1) * self.n_x, :]])
 
-        # setting new initial conditions
-        if self.order > 1:
+        ## setting new initial conditions
+        #if self.order > 1:
 
-            # pushing oldest input out of system and inserting the current input
-            new_inputs = np.vstack([u0, inputs[0:(self.order - 2) * self.n_u, :]])
+        #    # pushing oldest input out of system and inserting the current input
+        #    new_inputs = np.vstack([u0, inputs[0:(self.order - 2) * self.n_u, :]])
 
-            # setting new initial guess by removing the last timestamp data
-            self.states = self.reshape(new_states, shape=(self.n_x, -1))
-            self.inputs = self.reshape(new_inputs, shape=(self.n_u, -1))
-            self._generate_initial_guess()
+        #    # setting new initial guess by removing the last timestamp data
+        #    self.states = self.reshape(new_states, shape=(self.n_x, -1))
+        #    self.inputs = self.reshape(new_inputs, shape=(self.n_u, -1))
+        #    self._generate_initial_guess()
 
-        else:
-            self.states = self.reshape(new_states, shape=(self.n_x, -1))
-            self._generate_initial_guess()
+        #else:
+        #    self.states = self.reshape(new_states, shape=(self.n_x, -1))
+        #    self._generate_initial_guess()
 
         return x0
 

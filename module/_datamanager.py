@@ -8,7 +8,7 @@ import torch
 
 
 from ._graphics import plotter
-from ._narxwrapper import mpc_narx
+from ._narxwrapper import MPC_Brancher
 from ._narx import narx
 from ._cqr import cqr_narx
 from ._surrogate import Surrogate
@@ -466,8 +466,8 @@ class DataManager(plotter):
 
         # cqr class init
         self.cqr = cqr_narx(narx= self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
-                       order=self.data['order'], t_step=self.data['t_step'], device=device,
-                       set_seed=self.set_seed)
+                       order=self.data['order'], t_step=self.data['t_step'], lbx=self.data['lbx'],
+                            ubx=self.data['ubx'], device=device, set_seed=self.set_seed)
 
         # pushing trainer settings
         self.cqr.setup_trainer(hidden_layers=hidden_layers, learning_rate=learning_rate, batch_size=batch_size,
@@ -505,9 +505,10 @@ class DataManager(plotter):
         x_train = self.data['cqr_train_inputs']
         y_train = self.data['cqr_train_errors']
 
+        # cqr class init
         self.cqr = cqr_narx(narx=self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
-                            order=self.data['order'], t_step=self.data['t_step'], device=device,
-                            set_seed=self.set_seed)
+                            order=self.data['order'], t_step=self.data['t_step'], lbx=self.data['lbx'],
+                            ubx=self.data['ubx'], device=device, set_seed=self.set_seed)
 
         # pushing trainer settings
         self.cqr.setup_trainer(hidden_layers=hidden_layers, learning_rate=learning_rate, batch_size=batch_size,
@@ -548,12 +549,12 @@ class DataManager(plotter):
         y_test = self.data['test_outputs']
         t_test = self.data['test_timestamps']
 
-        self.cqr.plot_cqr_error_plotly(x_test= x_test, y_test=y_test, t_test=t_test)
+        self.cqr.plot_cqr_error(x_test= x_test, y_test=y_test, t_test=t_test)
 
         return None
 
 
-    def random_state_mpc(self, model, n_horizon, r, suppress_ipopt=True):
+    def random_state_mpc(self, model, n_horizon, r, cqr, suppress_ipopt=True):
 
         # init
         n_x = self.data['n_x']
@@ -566,7 +567,7 @@ class DataManager(plotter):
         x_ref = model.tvp['state_ref']
 
         # generating mpc class
-        mpc = mpc_narx(model=model, order=order, n_x=n_x, n_u=n_u)
+        mpc = do_mpc.controller.MPC(model=model)
 
         # supperess ipopt output
         if suppress_ipopt:
@@ -616,15 +617,15 @@ class DataManager(plotter):
         mpc.setup()
 
         # storage
-        self.mpc = mpc
+        self.cqr_mpc = MPC_Brancher(mpc=mpc, cqr=cqr)
 
         # flag update
         self.flags.update({
-            'mpc_ready': True,
+            'cqr_mpc_ready': True,
         })
 
         # end
-        return mpc
+        return self.cqr_mpc
 
     def run_simulation(self, system, iter, n_horizon, r):
         # init
@@ -642,7 +643,7 @@ class DataManager(plotter):
 
         # getting controller with surrogate model inside the mpc
         surrogate_model = self.narx_2_dompc()
-        mpc = self.random_state_mpc(model=surrogate_model, n_horizon=n_horizon, r=r)
+        cqr_mpc = self.random_state_mpc(model=surrogate_model, n_horizon=n_horizon, r=r, cqr=self.cqr)
 
         # take initial guess from test data
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
@@ -658,15 +659,15 @@ class DataManager(plotter):
             # set initial guess for surrogate simulator
             #self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
             #                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
-            mpc.states=self.reshape(states_history, shape=(n_x, -1))
-            mpc.inputs=self.reshape(inputs_history, shape=(n_u, -1))
-            mpc.narx_set_initial_guess()
+            cqr_mpc.states=self.reshape(states_history, shape=(n_x, -1))
+            cqr_mpc.inputs=self.reshape(inputs_history, shape=(n_u, -1))
+            cqr_mpc.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
             #self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
-            mpc.states=self.reshape(states_history, shape=(n_x, -1))
-            mpc.narx_set_initial_guess()
+            cqr_mpc.states=self.reshape(states_history, shape=(n_x, -1))
+            cqr_mpc.set_initial_guess()
 
         # extracting the most recent initial state for the data
         x0 = self.reshape(states_history[0:n_x], shape=(n_x, 1))
@@ -676,8 +677,10 @@ class DataManager(plotter):
         simulator.set_initial_guess()
 
         # run the main loop
-        for _ in range(iter):
-            u0 = mpc.narx_make_step(x0)
+        #for _ in tqdm(range(iter), desc=f'Simulating system'):
+        for _ in tqdm(range(iter), desc='Simulating'):
+
+            u0 = cqr_mpc.make_step(x0)
             #x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0)
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)
