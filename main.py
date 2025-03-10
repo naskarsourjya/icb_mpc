@@ -48,7 +48,8 @@ dm.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320,
 
 #print(su.cqr_make_step(u0=np.array([[0.9]])))
 #su.plot_cqr_error_plotly()
-dm.run_simulation(system=spring_system, iter=2, n_horizon=10, r=0.01)
-dm.cqr.plot_branch()
+dm.run_simulation(system=spring_system, iter=2, n_horizon=10, r=0.01, store_gif=True)
+#dm.cqr_mpc.plot_trials()
 #dm.plot_simulation()
+dm.show_gif()
 

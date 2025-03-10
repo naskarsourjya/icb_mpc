@@ -48,7 +48,7 @@ The errors are not zero, but very close. It needs to be quantified.
 
 ## Closed Points
 The errors between the do_mpc surrogate model and the pytorch narx model are not zero, but very close. It needs to be quantified.
-This reduceds when order = 1
+This reduces when order = 1
 
 Checkout splitting of data in narx training and also in make steps. Also check in what order is history for state and input used. (Checked, ref: check excel sheet)
 
@@ -62,23 +62,64 @@ Should I keep the current QR training where we train individually each regressor
 What is mod(I2)?? Page 6 of reghu paper 6
 
 
-# Week 3 (27/01/2025)
+# Week 3 (03/02/2025)
 
 ## query
 1. do we do the calculations for only one miss coverage value(alpha). That means only one pair 
 2. np.quantile(arr, 0.7) computes the value below which 70% of the data falls. 
 If the 0.7th quantile lies between two data points, linear interpolation is used by default.
 3. 
+# Week 4 (10/02/2025)
+Problems with random MPC whenre the random setpoin tracking is not working
+
+# Week 5 (17/02/2025) (No meeting)
+Major resuructuring of one file to multiple classes for modularity. Developed initial version of branching algo.
 
 
-## open points
-1. big red flag with reshpe! Reshpae is first filling individaul rows. I want it to first fill up columns.
+
+# Week 6 (24/02/2025)
+Rewrote the branching algo in matrices. Massive improvement observed (5hrs+ to couple minutes <10mins).
+
+# Week 7 (03/03/2025)
+
+make plot of simulation with the surrogate model
+
+Plot the setpoints for mpc
+
+use a good madel
+
+make a confidence cutoff for branching algo
+
+Print out an optimal output for the mpc
+
+plot the x_taj form the mpc for verification
+
+# Week 8 (10/03/2025)
+Increase the f_ext cost term to 10^3 and then maybe try to reduce if mpc does nothing.
+
+mpc.reset_history is causing problems, find a workaround
+
+Simulate the real sysetm and the surrogate and the cqr, compare all three against each other
 
 Scale data (standard scaling or min max scaling) before training.
 
-Look up soruce no 12 from reghu paper
+Tune system constants to make it fast. k, c and m needs to be tuned.
+
+## open points
+Change mpc form random setpoint tracking to step jump, close to boundary.
 
 Use surrogate mpc to control the real system
+
+Use generic mpc to control real system
+
+Move cqr _post_processing to Pytorch device
+
+Compare results of surrogate mpc and generic mpc
+
+Remove dependence on numpy. Instaed use pytorch.
+
+Look up soruce no 12 from reghu paper
+
 
 # List of hyperparameters
 1. number of layers for narx

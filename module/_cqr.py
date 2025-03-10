@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -134,7 +133,7 @@ class cqr_narx():
         return None
 
 
-    def setup_plot(self, height_px=700, width_px=1800):
+    def setup_plot(self, height_px=300, width_px=1800):
 
         self.height_px = height_px
         self.width_px = width_px
@@ -449,7 +448,7 @@ class cqr_narx():
                 Q1_alpha = np.vstack([Q1_alpha, Q_xn])
 
         # storage
-        self.Q1_alpha = Q1_alpha
+        self.Q1_alpha = torch.tensor(Q1_alpha)
 
         # update flag
         self.flags.update({
@@ -534,7 +533,7 @@ class cqr_narx():
 
         # making full model prediction
         with torch.no_grad():
-            y_pred = self.full_model(X_torch).cpu().numpy().T
+            y_pred = self.full_model(X_torch).T
 
         # doing postprocessing containing the conformalisation step
         x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
@@ -582,7 +581,9 @@ class cqr_narx():
         return x0, x0_cqr_high, x0_cqr_low
 
 
-    def _post_processing(self, y):
+    def _post_processing_old(self, y):
+
+        y = y.cpu().numpy()
 
         # init
         n_x = self.n_x
@@ -611,6 +612,37 @@ class cqr_narx():
 
         # end
         return x0, x0_cqr_high, x0_cqr_low
+
+
+    def _post_processing(self, y):
+
+        # init
+        n_x = self.n_x
+        Q1_alpha = self.Q1_alpha
+        n_samples = y.shape[1]
+
+        # stacking states
+        states = y[0:n_x,:]
+        stacked_states = torch.vstack([states] * 3)
+
+        # stacking errors
+        errors = y[n_x:, :]
+        stacked_errors = torch.vstack([torch.zeros((n_x, n_samples)), errors])
+
+        # stacking conformalisation
+        conform = torch.hstack([Q1_alpha] * n_samples)
+        stacked_confrom = torch.vstack([torch.zeros((n_x, n_samples)), conform, -conform])
+
+        # final prediction
+        pred = stacked_states + stacked_errors + stacked_confrom
+
+        # extracting the quantiles
+        x0 = pred[0:n_x, :]
+        x0_cqr_high = pred[n_x:2 * n_x, :]
+        x0_cqr_low = pred[2 * n_x:, :]
+
+        # end
+        return x0.cpu().numpy(), x0_cqr_high.cpu().numpy(), x0_cqr_low.cpu().numpy()
 
 
     def plot_qr_training_history(self):
@@ -914,63 +946,8 @@ class cqr_narx():
         fig.show()
         return None
 
-    def make_branch_old(self, u0_traj):
-        assert self.flags['qr_ready'], "Qunatile regressor not ready."
-        assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
-        assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
-        assert u0_traj.shape[0] == self.n_u, \
-            f"u0 should have have {self.n_u} rows but instead found {u0_traj.shape[0]}!"
 
-        # storage for later retreival
-        prev_ic = self.initial_cond
-        ic_branch = [self.initial_cond]
-        states_branch = [[self.initial_cond[0:self.n_x]]]
-        steps = u0_traj.shape[1]
-
-        # generating the branches
-        for i in range(steps):
-
-            # init
-            states_i = []
-            ic_i = []
-
-            # for ith branch, calculating the states
-            for current_ic in tqdm(ic_branch, desc=f'Inner Loop Branches {i+1}/{steps}'):
-
-                # init
-                u0 = self.reshape(u0_traj[:,i], shape=(self.n_u, 1))
-
-                # restoring the previous ic
-                self.initial_cond = current_ic
-
-                # making prediction
-                x0, x0_cqr_high, x0_cqr_low = self.make_step(u0 = u0)
-
-                # storage
-                states_i.append(x0)
-                states_i.append(x0_cqr_high)
-                states_i.append(x0_cqr_low)
-
-                # mean initial cond
-                ic_i.append(self.initial_cond)
-
-                # high initial cond
-                ic_i.append(np.vstack([x0_cqr_high, self.initial_cond[self.n_x:]]))
-
-                # low initial cond
-                ic_i.append(np.vstack([x0_cqr_low, self.initial_cond[self.n_x:]]))
-
-            # storing initial conditions for the next branch
-            ic_branch = ic_i
-
-            # stores the branched states
-            states_branch.append(states_i)
-
-        # end
-        return states_branch
-
-
-    def make_branch(self, u0_traj, lbx=None, ubx=None):
+    def make_branch(self, u0_traj, confidence_cutoff=0.5):
         assert self.flags['qr_ready'], "Qunatile regressor not ready."
         assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
         assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
@@ -987,11 +964,6 @@ class cqr_narx():
         alpha_branch = [1-self.alpha]
         time_branch = [0.0]
         steps = u0_traj.shape[1]
-
-        if lbx is None:
-            lbx=self.lbx
-        if ubx is None:
-            ubx=self.ubx
 
         # generating the branches
         for i in range(steps):
@@ -1016,7 +988,7 @@ class cqr_narx():
 
             # making full model prediction
             with torch.no_grad():
-                y_pred = self.full_model(X_torch).cpu().numpy().T
+                y_pred = self.full_model(X_torch).T
 
             # doing postprocessing containing the conformalisation step
             x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
@@ -1039,59 +1011,43 @@ class cqr_narx():
             alpha_branch.append(alpha_branch[-1]*(1-self.alpha))
             time_branch.append(time_branch[-1] + self.t_step)
 
+            # force cutoff is confidence is low
+            if alpha_branch[-1] < confidence_cutoff:
+                break
+
         # reverting back to previous ic
         self.initial_cond = prev_ic
+        self.confidence_cutoff = confidence_cutoff
 
         # storage
         self.branches = {'states': states_branch,
                          'alphas': alpha_branch,
                          'time_stamps': time_branch,
-                         'lbx': lbx,
-                         'ubx': ubx}
+                         'u0_traj': u0_traj}
 
         # end
         return self.branches
 
 
-    def plot_branch(self):
+    def plot_branch(self, t0=0.0, show_plot=True):
 
         n_x = self.n_x
-        time_stamps = self.branches['time_stamps']
+        n_u = self.n_u
+        time_stamps = [num + t0 for num in self.branches['time_stamps']]
         states = self.branches['states']
         alphas = self.branches['alphas']
-        lbx = self.branches['lbx']
-        ubx = self.branches['ubx']
+        u0_traj = self.branches['u0_traj']
 
         # Create subplots
-        fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="CQR State Branch Plots",
-                          showlegend=True)
+
+        fig = make_subplots(rows=n_x+n_u, cols=1, shared_xaxes=True)
+        fig.update_layout(height=self.height_px * (n_x+n_u), width=self.width_px, title_text="CQR State Branch Plots",
+                              showlegend=True)
 
         # Loop through each state
         for i in range(n_x):
             # init
             mean_prediction = []
-
-            # Add shaded region for bounds
-            fig.add_trace(go.Scatter(
-                x=[min(time_stamps), max(time_stamps), max(time_stamps), min(time_stamps)],
-                y=[lbx[i], lbx[i], ubx[i], ubx[i]],
-                fill="toself",
-                fillcolor="rgba(200, 200, 200, 0.3)",  # Grey shaded region
-                line=dict(color="rgba(255,255,255,0)"),  # No border
-                name="Bounds", showlegend=True if i == 0 else False),
-                row=i + 1, col=1)
-
-            # Add lines for upper and lower bounds
-            fig.add_trace(go.Scatter(x=time_stamps, y=[ubx[i]] * len(time_stamps), mode='lines',
-                                     line=dict(color='red', dash='dash'), name='Upper Bound',
-                                     showlegend=True if i == 0 else False),
-                          row=i + 1, col=1)
-            fig.add_trace(go.Scatter(x=time_stamps, y=[lbx[i]] * len(time_stamps), mode='lines',
-                                     line=dict(color='green', dash='dash'), name='Lower Bound',
-                                     showlegend=True if i == 0 else False),
-                          row=i + 1, col=1)
-
 
             # Predicted mean line (show legend for the first plot of each row)
             for j, t in enumerate(time_stamps):
@@ -1102,16 +1058,17 @@ class cqr_narx():
                         x=[time_stamps[j], time_stamps[j+1], time_stamps[j+1], time_stamps[j]],
                         y=[min(states[j][i,:]), min(states[j+1][i,:]), max(states[j+1][i,:]), max(states[j][i,:])],
                         fill="toself",
-                        fillcolor=f"rgba(255, 165, 0, {alphas[j]})",  # Grey shaded region
+                        fillcolor=f"rgba(255, 255, 0, {alphas[j]})",  # Grey shaded region
                         line=dict(color="rgba(255,255,255,0)"),  # No border
                         name=f"Confidence={alphas[j]}", showlegend=False),
+
                         row=i + 1, col=1)
 
 
                 fig.add_trace(go.Scatter(x=[t]*states[j][i,:].shape[0], y=states[j][i,:],
                                          mode='markers', name=f'Branches',
-                                         marker=dict(color='black', size=2),
-                                         showlegend=False),
+                                         marker=dict(color='pink', size=2),
+                                         showlegend=True if i==0 and j==0 else False),
                               row=i + 1, col=1)
 
                 # extracting mean prediction
@@ -1120,18 +1077,33 @@ class cqr_narx():
             # making the mean prediction
             fig.add_trace(go.Scatter(x=time_stamps, y=mean_prediction,
                                      mode='lines',
-                                     line=dict(color='purple', dash='solid'), name='Mean Prediction',
+                                     line=dict(color='red', dash='dash'), name='Nominal Projection',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
 
             fig.update_yaxes(title_text=f' State {i + 1}', row=i + 1, col=1)
             fig.update_xaxes(title_text='Times [s]', row=i + 1, col=1)
 
-        # Show plot
-        fig.show()
+        for j in range(n_u):
+            # making the mean prediction
+            fig.add_trace(go.Scatter(x=time_stamps, y=u0_traj[j,:],
+                                     mode='lines',
+                                     line=dict(color='red', dash='dash'), name='Input Trajectory',
+                                     showlegend=False),
+                          row=j+i+2, col=1)
 
-        # end
-        return None
+            fig.update_yaxes(title_text=f' Inputs {j + 1}', row=j+i+2, col=1)
+            fig.update_xaxes(title_text='Times [s]', row=j+i+2, col=1)
+
+        # Show plot
+        if show_plot:
+            fig.show()
+            return None
+
+        # returns plot for further modifiction
+        else:
+            return fig
+
 
 
 

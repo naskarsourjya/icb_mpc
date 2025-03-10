@@ -1,10 +1,12 @@
 import numpy as np
-import casadi as ca
 import pickle
 from sklearn.model_selection import train_test_split
 import do_mpc
 from tqdm import tqdm
 import torch
+import os
+import imageio
+from IPython.display import display, Image
 
 
 from ._graphics import plotter
@@ -554,7 +556,7 @@ class DataManager(plotter):
         return None
 
 
-    def random_state_mpc(self, model, n_horizon, r, cqr, suppress_ipopt=True):
+    def step_state_mpc(self, model, n_horizon, r, cqr, iter, step_mag=0.01, suppress_ipopt=False):
 
         # init
         n_x = self.data['n_x']
@@ -580,10 +582,12 @@ class DataManager(plotter):
         mpc.set_param(n_horizon=n_horizon)
 
         # setting up cost function
-        mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
+        #mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
+        #mterm = (x_ref[0] - x[0]) ** 2 # tracking only the  first state
+        mterm = (0.5 + x[0]) ** 2
 
         # passing objective function
-        mpc.set_objective(mterm=mterm, lterm=0*mterm)
+        mpc.set_objective(mterm=mterm, lterm=mterm)
 
         # input penalisation
         mpc.set_rterm(system_input=r)
@@ -607,8 +611,14 @@ class DataManager(plotter):
 
         # sending random setpoints inside box constraints
         def tvp_fun(t_ind):
-            ref = np.random.uniform(self.data['lbx'], self.data['ubx']).reshape((-1,1))
-            tvp_template['_tvp', :, 'state_ref'] = ref
+            #range_x = self.data['ubx'] - self.data['lbx']
+            tvp_template['_tvp', :, 'state_ref'] = np.array([[-0.8], [0]])
+            #if t_ind<self.data['t_step']*iter/2:
+            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + step_mag * range_x
+
+            #else:
+            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + (1-step_mag) * range_x
+
             return tvp_template
 
         mpc.set_tvp_fun(tvp_fun)
@@ -627,13 +637,14 @@ class DataManager(plotter):
         # end
         return self.cqr_mpc
 
-    def run_simulation(self, system, iter, n_horizon, r):
+    def run_simulation(self, system, iter, n_horizon, r, store_gif=False):
         # init
         narx_inputs = self.data['test_inputs']
         #narx_outputs = self.data['test_outputs']
         n_x = self.data['n_x']
         n_u = self.data['n_u']
         order = self.data['order']
+        all_plots = []
 
 
         # system init
@@ -643,7 +654,7 @@ class DataManager(plotter):
 
         # getting controller with surrogate model inside the mpc
         surrogate_model = self.narx_2_dompc()
-        cqr_mpc = self.random_state_mpc(model=surrogate_model, n_horizon=n_horizon, r=r, cqr=self.cqr)
+        cqr_mpc = self.step_state_mpc(model=surrogate_model, n_horizon=n_horizon, r=r, cqr=self.cqr, iter=iter)
 
         # take initial guess from test data
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
@@ -678,20 +689,60 @@ class DataManager(plotter):
 
         # run the main loop
         #for _ in tqdm(range(iter), desc=f'Simulating system'):
-        for _ in tqdm(range(iter), desc='Simulating'):
+        #for _ in tqdm(range(iter), desc='Simulating'):
+        for _ in range(iter):
 
-            u0 = cqr_mpc.make_step(x0)
+            u0 = cqr_mpc.make_step(x0, max_iter=5, enable_plots = True)
             #x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0)
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)
 
+            if store_gif:
+                all_plots.append(cqr_mpc.plot_trials(show_plot=False))
+
         # storage
         self.simulation['simulator'] = simulator
+        self.store_gif = store_gif
+        self.all_plots = all_plots
 
         # flag update
         self.flags.update({
                 'simulation_ready': True,
             })
 
+
         return None
 
+
+    def show_gif(self, file_name= "plotly_animation.gif", frame_dir = "plotly_frames"):
+        assert self.store_gif, "Create gif not enabled in run_simulation!"
+
+        # init
+        all_plots = self.all_plots
+        i = 0
+        image_files = []
+
+        # Directory to save images
+        os.makedirs(frame_dir, exist_ok=True)
+
+        # generating images
+        for plots in tqdm(all_plots, desc="Storing plots"):
+            for fig in plots:
+                # convert to png
+                img_path = f"{frame_dir}/frame_{i}.png"
+                fig.write_image(img_path)
+                image_files.append(img_path)
+                i += 1
+
+        # Convert images to GIF
+        with imageio.get_writer(file_name, mode='I', duration=0.5) as writer:
+            for img in tqdm(image_files, desc='Generating gif'):
+                image = imageio.imread(img)
+                writer.append_data(image)
+
+        print(f"GIF saved as {file_name}")
+
+        # display gif
+        display(Image(filename=file_name))
+
+        return  None
