@@ -369,7 +369,7 @@ class DataManager(plotter):
         self.surrogate = Surrogate(n_x=self.data['n_x'], n_u=self.data['n_u'],
                                   order=self.data['order'], t_step=self.data['t_step'])
 
-        model = self.surrogate.narx_2_dompc_model(narx=self.narx.model)
+        model = self.surrogate.narx_2_dompc_model(narx=self.narx)
         self.surrogate.create_simulator()
 
         # end
@@ -584,7 +584,7 @@ class DataManager(plotter):
         # setting up cost function
         #mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
         #mterm = (x_ref[0] - x[0]) ** 2 # tracking only the  first state
-        mterm = (0.5 + x[0]) ** 2
+        mterm = (0 -x[0]) ** 2
 
         # passing objective function
         mpc.set_objective(mterm=mterm, lterm=mterm)
@@ -746,3 +746,8 @@ class DataManager(plotter):
         display(Image(filename=file_name))
 
         return  None
+
+
+    def check_simulator(self, system, iter):
+
+        return None

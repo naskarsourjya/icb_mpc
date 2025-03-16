@@ -52,7 +52,18 @@ class Regressor(nn.Module):
 
         # auto choose gpu if gpu is available
         if device == 'auto':
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+            # 1st priority
+            if torch.cuda.is_available():
+                device = 'cuda'
+
+            # 2nd priority
+            #elif torch.mps.is_available():
+            #    device = 'mps'
+
+            # fallback
+            else:
+                device = 'cpu'
 
         # torch default device is set
         self.torch_device = torch.device(device)
@@ -104,7 +115,18 @@ class MergedModel(nn.Module):
     def _set_device(self, device):
         # auto choose gpu if gpu is available
         if device == 'auto':
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+            # 1st priority
+            if torch.cuda.is_available():
+                device = 'cuda'
+
+            # 2nd priority
+            #elif torch.mps.is_available():
+            #    device = 'mps'
+
+            # fallback
+            else:
+                device = 'cpu'
 
         # torch default device is set
         self.torch_device = torch.device(device)

@@ -109,6 +109,8 @@ class plotter():
         fig, ax, graphics = do_mpc.graphics.default_plot(self.simulation['simulator'].data, figsize=(16, 9))
         graphics.plot_results()
         graphics.reset_axes()
+        for ax_n in ax:
+            ax_n.grid(True)
         plt.show()
 
         # end

@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from sklearn.preprocessing import MinMaxScaler
 
 from ._neuralnetwork import Regressor
 
@@ -147,11 +148,15 @@ class narx():
                          'learning_rate': [],
                          'epochs': []}
 
+        # scaling the input
+        scaler = MinMaxScaler()
+        x_train_scaled = scaler.fit_transform(x_train.T)
+
         # setting computation device
         self._set_device(torch_device= narx_model.torch_device)
 
         # converting datasets to tensors
-        X_torch = torch.tensor(x_train.T, dtype=torch.float32)
+        X_torch = torch.tensor(x_train_scaled, dtype=torch.float32)
         Y_torch = torch.tensor(y_train.T, dtype=torch.float32)
 
         # Create TensorDataset
@@ -220,6 +225,7 @@ class narx():
 
         # store model
         self.model = narx_model
+        self.scaler = scaler
         self.train_history = train_history
         # flag update
         self.flags.update({
@@ -301,8 +307,11 @@ class narx():
         # setting default device
         self._set_device(torch_device=self.model.torch_device)
 
-        # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_torch = torch.tensor(X.T, dtype=torch.float32)
+        # scaling
+        X_scaled = self.scaler.transform(X.T)
+
+        # loading tensor
+        X_torch = torch.tensor(X_scaled, dtype=torch.float32)
 
         # making full model prediction
         with torch.no_grad():

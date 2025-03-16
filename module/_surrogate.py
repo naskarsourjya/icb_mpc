@@ -2,6 +2,7 @@ import torch
 import do_mpc
 import casadi as ca
 import  numpy as np
+from sklearn.preprocessing import MinMaxScaler
 
 
 class Surrogate():
@@ -43,8 +44,11 @@ class Surrogate():
         # narx input layer
         input_layer = ca.vertcat(states_history, system_input, inputs_histroy)
 
+        # scaled input layer
+        input_layer_scaled = self.scale_input_layer(input_layer, narx.scaler)
+
         # reading the layers and the biases
-        for layer in narx.network:
+        for layer in narx.model.network:
 
             # linear transformations
             if isinstance(layer, torch.nn.Linear):
@@ -53,7 +57,7 @@ class Surrogate():
                 bias = layer.bias.cpu().detach().numpy()
 
                 if layer_counter == 0:
-                    output_layer = ca.mtimes(weight, input_layer) + bias
+                    output_layer = ca.mtimes(weight, input_layer_scaled) + bias
 
                 else:
                     output_layer = ca.mtimes(weight, output_layer) + bias
@@ -104,6 +108,23 @@ class Surrogate():
         # end
         return model
 
+
+    def scale_input_layer(self, input_layer, scaler):
+
+        assert isinstance(scaler, MinMaxScaler), (f"Only MinMaxScaler supported as of yet! "
+                                                  f"Scaler found is {scaler}, which is not supported.")
+
+        # extracting scaler info
+        X_min = scaler.data_min_  # Minimum values of original data
+        X_max = scaler.data_max_  # Maximum values of original data
+        X_scale = scaler.scale_  # Scaling factor (1 / (X_max - X_min))
+        X_min_target = scaler.min_  # Shift factor (used for transformation)
+
+        # final scaling
+        input_layer_scaled = X_min_target + X_scale * (input_layer - X_min)
+
+        # end
+        return input_layer_scaled
 
     def create_simulator(self):
         assert self.flags['model_ready'], "do_mpc model not generated! Use narx_2_dompc_model() to generate a model."

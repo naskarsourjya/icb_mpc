@@ -30,10 +30,10 @@ class SpringSystem:
                         # range betn [0 -1]
                         # increasing this reduces oscillatroy behaviou of input
         # box constraints
-        self.lbx = np.array([-1, -1])   # [lower_bound_position, lower_bound_velocity]
-        self.ubx = np.array([1, 1])     # [upper_bound_position, upper_bound_velocity]
-        self.lbu = np.array([-1])       # [lower_bound_f_ext]
-        self.ubu = np.array([1])        # [upper_bound_f_ext]
+        self.lbx = np.array([-0.01, -2.65/100])   # [lower_bound_position, lower_bound_velocity]
+        self.ubx = np.array([0.01, 2.65/100])     # [upper_bound_position, upper_bound_velocity]
+        self.lbu = np.array([-0.1])       # [lower_bound_f_ext]
+        self.ubu = np.array([0.1])        # [upper_bound_f_ext]
 
         return None
 
@@ -52,9 +52,12 @@ class SpringSystem:
         f_external = model.set_variable(var_type='_u', var_name='f_external', shape=(1,1))
 
         # constants
-        k = 1.0     # spring constant
-        c = 0.1     # damping constant
-        mass = 1.0  # mass of the object
+        #k = 1.0     # spring constant
+        #c = 0.1     # damping constant
+        #mass = 1.0  # mass of the object
+        k = 10
+        c = 2
+        mass = 0.1
 
         # Define the model equations
         model.set_rhs('position', velocity)
