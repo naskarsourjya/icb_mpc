@@ -140,9 +140,6 @@ class narx():
 
     def train(self, x_train, y_train):
         # init
-        narx_model = Regressor(input_size= self.order*(self.n_x + self.n_u),
-                                output_size= self.n_x,
-                                hidden_layers=self.hidden_layers, device=self.device)
         train_history = {'training_loss': [],
                          'validation_loss': [],
                          'learning_rate': [],
@@ -150,13 +147,18 @@ class narx():
 
         # scaling the input
         scaler = MinMaxScaler()
-        x_train_scaled = scaler.fit_transform(x_train.T)
+        scaler.fit(x_train.T)
+
+        # nn init
+        narx_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
+                               output_size=self.n_x, hidden_layers=self.hidden_layers,
+                               scaler=scaler, device=self.device)
 
         # setting computation device
         self._set_device(torch_device= narx_model.torch_device)
 
         # converting datasets to tensors
-        X_torch = torch.tensor(x_train_scaled, dtype=torch.float32)
+        X_torch = torch.tensor(x_train.T, dtype=torch.float32)
         Y_torch = torch.tensor(y_train.T, dtype=torch.float32)
 
         # Create TensorDataset
@@ -308,10 +310,10 @@ class narx():
         self._set_device(torch_device=self.model.torch_device)
 
         # scaling
-        X_scaled = self.scaler.transform(X.T)
+        #X_scaled = self.scaler.transform(X.T)
 
         # loading tensor
-        X_torch = torch.tensor(X_scaled, dtype=torch.float32)
+        X_torch = torch.tensor(X.T, dtype=torch.float32)
 
         # making full model prediction
         with torch.no_grad():

@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
+from sklearn.preprocessing import MinMaxScaler
 
 
 class Regressor(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, device='auto'):
+    def __init__(self, input_size, output_size, hidden_layers, scaler=None, device='auto'):
         super(Regressor, self).__init__()
 
         # set device
@@ -33,12 +34,52 @@ class Regressor(nn.Module):
         # stores number of parameters
         self.n_params = self.count_parameters()
 
+        # setup scalar
+        if scaler != None:
+            self.setup_scaler(scaler)
+            self.scaler_flag = True
+
+        else:
+            self.scaler_flag = False
+
         # end of init
+
+
+    def setup_scaler(self, scaler):
+
+        assert isinstance(scaler, MinMaxScaler), (f"Only MinMaxScaler supported as of yet! "
+                                                  f"Scaler found is {scaler}, which is not supported.")
+
+        # extracting scaler info
+        X_min = torch.tensor(scaler.data_min_, dtype=torch.float32)  # Minimum values of original data
+        X_max = torch.tensor(scaler.data_max_, dtype=torch.float32)  # Maximum values of original data
+        X_scale = torch.tensor(scaler.scale_, dtype=torch.float32)  # Scaling factor (1 / (X_max - X_min))
+        X_min_target = torch.tensor(scaler.min_, dtype=torch.float32)  # Shift factor (used for transformation)
+
+        # storage
+        self.scaler = {'scaler': scaler,
+                       'X_min': X_min,
+                       'X_max': X_max,
+                       'X_scale': X_scale,
+                       'X_min_target': X_min_target}
+
+        # end
+        return None
+
 
     def forward(self, x):
 
+        # init
+        X_min_target = self.scaler['X_min_target']
+        X_scale = self.scaler['X_scale']
+        X_min = self.scaler['X_min']
+
+        # scaling
+        x_scaled = X_min_target + X_scale * (x - X_min)
+
         # returns current state
-        return self.network(x)
+        return self.network(x_scaled)
+
 
     def count_parameters(self):
         """
@@ -47,6 +88,7 @@ class Regressor(nn.Module):
             int: Total number of parameters.
         """
         return sum(p.numel() for p in self.network.parameters())
+
 
     def _set_device(self, device):
 
@@ -58,7 +100,7 @@ class Regressor(nn.Module):
                 device = 'cuda'
 
             # 2nd priority
-            #elif torch.mps.is_available():
+            #elif torch.backends.mps.is_available():
             #    device = 'mps'
 
             # fallback
@@ -96,6 +138,7 @@ class MergedModel(nn.Module):
 
         # end of init
 
+
     def forward(self, x):
         """
         Forward pass through all models, combining their outputs.
@@ -112,6 +155,7 @@ class MergedModel(nn.Module):
         # end
         return torch.cat(outputs, dim=1)
 
+
     def _set_device(self, device):
         # auto choose gpu if gpu is available
         if device == 'auto':
@@ -121,7 +165,7 @@ class MergedModel(nn.Module):
                 device = 'cuda'
 
             # 2nd priority
-            #elif torch.mps.is_available():
+            #elif torch.backends.mps.is_available():
             #    device = 'mps'
 
             # fallback

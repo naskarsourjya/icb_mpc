@@ -160,7 +160,7 @@ class cqr_narx():
 
         # scaling data
         scaler = MinMaxScaler()
-        x_train_scaled = scaler.fit_transform(x_train.T)
+        scaler.fit(x_train.T)
 
         # creating a model for each quantile
         for quantile in quantiles:
@@ -168,7 +168,7 @@ class cqr_narx():
             # model init
             cqr_model_n = Regressor(input_size=order * (n_x + n_u),
                                     output_size=n_x,
-                                    hidden_layers=self.hidden_layers, device=self.device)
+                                    hidden_layers=self.hidden_layers, scaler=scaler, device=self.device)
 
             # setting training history
             train_history = {'training_loss': [],
@@ -181,7 +181,7 @@ class cqr_narx():
             self._set_device(torch_device=cqr_model_n.torch_device)
 
             # converting datasets to tensors
-            X_torch = torch.tensor(x_train_scaled, dtype=torch.float32)
+            X_torch = torch.tensor(x_train.T, dtype=torch.float32)
             Y_torch = torch.tensor(y_train.T, dtype=torch.float32)
 
             # Create TensorDataset
@@ -291,11 +291,6 @@ class cqr_narx():
         quantiles = [high_quantile] + [low_quantile]
         n_q = len(quantiles)
 
-        # model init
-        cqr_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
-                              output_size=self.n_x * n_q,
-                              hidden_layers=self.hidden_layers, device=self.device)
-
         # setting training history
         train_history = {'training_loss': [],
                          'validation_loss': [],
@@ -305,13 +300,18 @@ class cqr_narx():
 
         # scaling the input
         scaler = MinMaxScaler()
-        x_train_scaled = scaler.fit_transform(x_train.T)
+        scaler.fit(x_train.T)
+
+        # model init
+        cqr_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
+                              output_size=self.n_x * n_q,
+                              hidden_layers=self.hidden_layers, scaler=scaler, device=self.device)
 
         # setting computation device
         self._set_device(torch_device=cqr_model.torch_device)
 
         # converting datasets to tensors
-        X_torch = torch.tensor(x_train_scaled, dtype=torch.float32)
+        X_torch = torch.tensor(x_train.T, dtype=torch.float32)
 
         # stacking once per quantile
         Y_stacked = np.vstack([y_train for _ in range(n_q)])
@@ -425,10 +425,10 @@ class cqr_narx():
         n_samples = y_calib.shape[1]
 
         # scaling calibration data
-        x_calib_sc = self.scaler.transform(x_calib.T)
+        #x_calib_sc = self.scaler.transform(x_calib.T)
 
         # making quantile prediction
-        Xi_troch = torch.tensor(x_calib_sc, dtype=torch.float32)
+        Xi_troch = torch.tensor(x_calib.T, dtype=torch.float32)
         with torch.no_grad():
             qr_all = self.cqr_model(Xi_troch).cpu().numpy().T
 
@@ -540,13 +540,13 @@ class cqr_narx():
         X = np.vstack([states, u0, inputs])
 
         # scaling
-        X_scaled = self.scaler.transform(X.T)
+        #X_scaled = self.scaler.transform(X.T)
 
         # setting default device
         self._set_device(torch_device=self.full_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_torch = torch.tensor(X_scaled, dtype=torch.float32)
+        X_torch = torch.tensor(X.T, dtype=torch.float32)
 
         # making full model prediction
         with torch.no_grad():
@@ -777,13 +777,13 @@ class cqr_narx():
         n_a = 1
 
         # scaling
-        X_scaled = self.scaler.transform(x_test.T)
+        #X_scaled = self.scaler.transform(x_test.T)
 
         # setting default device
         self._set_device(torch_device=self.cqr_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_narx = torch.tensor(X_scaled, dtype=torch.float32)
+        X_narx = torch.tensor(x_test.T, dtype=torch.float32)
 
         # making prediction
         with torch.no_grad():
@@ -1001,13 +1001,13 @@ class cqr_narx():
             X = np.vstack([states, u0_stacked, inputs])
 
             # scaling
-            X_scaled = self.scaler.transform(X.T)
+            #X_scaled = self.scaler.transform(X.T)
 
             # setting default device
             self._set_device(torch_device=self.full_model.torch_device)
 
             # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-            X_torch = torch.tensor(X_scaled, dtype=torch.float32)
+            X_torch = torch.tensor(X.T, dtype=torch.float32)
 
             # making full model prediction
             with torch.no_grad():

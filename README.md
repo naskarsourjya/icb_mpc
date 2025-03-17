@@ -98,6 +98,10 @@ plot the x_taj form the mpc for verification
 
 Scale data (standard scaling or min max scaling) before training.
 
+add mps support
+
+rewrite calculate surrogate error to calculate erroes in matrix insted of make_step
+
 Increase the f_ext cost term to 10^3 and then maybe try to reduce if mpc does nothing.
 
 mpc.reset_history is causing problems, find a workaround

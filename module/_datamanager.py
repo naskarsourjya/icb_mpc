@@ -451,8 +451,6 @@ class DataManager(plotter):
         return error
 
 
-
-
     def train_individual_qr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
                   validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8):
 
