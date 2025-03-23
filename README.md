@@ -96,28 +96,33 @@ plot the x_taj form the mpc for verification
 
 # Week 8 (10/03/2025)
 
+## done
+
 Scale data (standard scaling or min max scaling) before training.
 
 add mps support
 
-rewrite calculate surrogate error to calculate erroes in matrix insted of make_step
+## todo
+
+rewrite calculate surrogate error to calculate errors in matrix instead of make_step
 
 Increase the f_ext cost term to 10^3 and then maybe try to reduce if mpc does nothing.
 
 mpc.reset_history is causing problems, find a workaround
 
-Simulate the real sysetm and the surrogate and the cqr, compare all three against each other
+Simulate the real system and the surrogate and the cqr, compare all three against each other
+(results are out and we are cooked)
 
 Tune system constants to make it fast. k, c and m needs to be tuned.
 
 techniques to prevent overfitting
 1. regularisation
 2. dropout layers
-3. early stopping, stop when loss keeps incresing and restore the best weights
+3. early stopping, stop when loss keeps increasing and restore the best weights
 4. reduce parameters
 
 ## open points
-Change mpc form random setpoint tracking to step jump, close to boundary.
+Change mpc form random set-point tracking to step jump, close to boundary.
 
 Use surrogate mpc to control the real system
 

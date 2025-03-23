@@ -7,6 +7,8 @@ import torch
 import os
 import imageio
 from IPython.display import display, Image
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 from ._graphics import plotter
@@ -27,7 +29,6 @@ class DataManager(plotter):
         # data
         self.set_seed = set_seed
         self.data = {}
-        self.surrogate = {}
         self.simulation={}
 
         # generating flags
@@ -408,7 +409,7 @@ class DataManager(plotter):
         return None
 
 
-    def surrogate_error(self, cqr_train_inputs, cqr_train_outputs):
+    def surrogate_error_depreciate(self, cqr_train_inputs, cqr_train_outputs):
         assert self.flags['data_split'] == True, 'Split data not found!'
 
         # init
@@ -457,12 +458,9 @@ class DataManager(plotter):
         assert self.flags['data_split'] == True, 'Split data not found!'
         assert 0 < alpha < 1, "All alpha must be between 0 and 1"
 
-        # calculate the surrogate model error
-        self.data['cqr_train_errors'] = self.surrogate_error(cqr_train_inputs= self.data['cqr_train_inputs'],
-                                                             cqr_train_outputs= self.data['cqr_train_outputs'])
-
+        # training data
         x_train = self.data['cqr_train_inputs']
-        y_train = self.data['cqr_train_errors']
+        y_train = self.data['cqr_train_outputs']
 
         # cqr class init
         self.cqr = cqr_narx(narx= self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
@@ -477,22 +475,18 @@ class DataManager(plotter):
         # pushing data
         self.cqr.train_individual_qr(x_train=x_train, y_train=y_train)
 
-        # calculate the surrogate model error on cqr calibration data
-        self.data['cqr_calibration_errors'] = self.surrogate_error(cqr_train_inputs=self.data['cqr_calibration_inputs'],
-                                                                   cqr_train_outputs=self.data[
-                                                                       'cqr_calibration_outputs'])
-
-        # storage in convenient varaibles
+        # calibration data
         x_calib = self.data['cqr_calibration_inputs']
-        y_calib = self.data['cqr_calibration_errors']
+        y_calib = self.data['cqr_calibration_outputs']
 
+        # conformalising
         self.cqr.conform_qr(x_calib=x_calib, y_calib=y_calib)
 
         # end
         return None
 
 
-    def train_all_qr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
+    def train_all_qr_depreciate(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
                   validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8):
 
         assert self.flags['data_split'] == True, 'Split data not found!'
@@ -534,11 +528,9 @@ class DataManager(plotter):
 
     def cqr_plot_qr_error(self):
 
-        x_calib = self.data['cqr_calibration_inputs']
-        y_calib = self.data['cqr_calibration_errors']
         t_calib = self.data['cqr_calibration_timestamps']
 
-        self.cqr.plot_qr_error(x_test=x_calib, y_test=y_calib, t_test= t_calib)
+        self.cqr.plot_qr_error(t_test= t_calib)
 
         return None
 
@@ -747,5 +739,112 @@ class DataManager(plotter):
 
 
     def check_simulator(self, system, iter):
+
+        real_model = system._get_model()
+        real_simulator = system._get_simulator(model=real_model)
+
+        cqr_model = self.cqr
+
+        self.narx_2_dompc()
+        surrogate_model = self.surrogate
+
+        # extracting random initial point from test data
+        # take initial guess from test data
+        narx_inputs = self.data['test_inputs']
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+        rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
+
+        # extracting random column
+        states_history = narx_inputs[0:n_x * order, rnd_col]
+        inputs_n = narx_inputs[n_x * order:, rnd_col]
+        u0 = inputs_n[0:n_u]
+        inputs_history = inputs_n[n_u:]
+
+        # initial cond
+        real_simulator.x0 = states_history[0:n_x]
+        real_simulator.set_initial_guess()
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            cqr_model.states = self.reshape(states_history, shape=(n_x, -1))
+            cqr_model.inputs = self.reshape(inputs_history, shape=(n_u, -1))
+            cqr_model.set_initial_guess()
+
+            surrogate_model.states = self.reshape(states_history, shape=(n_x, -1))
+            surrogate_model.inputs = self.reshape(inputs_history, shape=(n_u, -1))
+            surrogate_model.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            cqr_model.states = self.reshape(states_history, shape=(n_x, -1))
+            cqr_model.set_initial_guess()
+
+            surrogate_model.states = self.reshape(states_history, shape=(n_x, -1))
+            surrogate_model.set_initial_guess()
+
+        # main loop
+        for _ in range(iter):
+            # random input inside the input boundaries
+            u_ref = self.reshape(np.random.uniform(system.lbu, system.ubu), shape=(-1, 1))
+
+            # simulation steps
+            x0_real = real_simulator.make_step(u0=u_ref)
+            x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u_ref)
+            x0_surrogate = surrogate_model.make_step(u0=u_ref)
+
+        # exporting logs
+        surrogate_model.export_log(file_name = 'Surrogate Model Log.csv')
+        cqr_model.export_log(file_name = 'CQR_NARX Model Log.csv')
+
+
+        # plots
+        fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
+        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="Simulation Comparison Plots",
+                          showlegend=True)
+
+        # plot for each state
+        for i in range(n_x):
+            # plot the real mean
+            # ax[i].plot(x_sorted, y_calib[i, :][sorted_indices], label=f'real mean')
+            fig.add_trace(go.Scatter(x=real_simulator.data['_time'].reshape(-1,), y=real_simulator.data['_x'][:, i],
+                                     mode='lines', line=dict(color='red'),
+                                     name='real simulation',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            fig.add_trace(go.Scatter(x=cqr_model.history['time'], y=cqr_model.history['x0_cqr'][i, :],
+                                     mode='lines', line=dict(color='green'),
+                                     name='CQR Nominal',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            '''fig.add_trace(go.Scatter(x=cqr_model.history['time'], y=cqr_model.history['x0_cqr_high'][i, :],
+                                     mode='lines', line=dict(color='blue'),
+                                     name='CQR High',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+            fig.add_trace(go.Scatter(x=cqr_model.history['time'], y=cqr_model.history['x0_cqr_low'][i, :],
+                                     mode='lines', line=dict(color='grey'),
+                                     name='CQR Low',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)'''
+
+            fig.add_trace(go.Scatter(x=surrogate_model.history['time'], y=surrogate_model.history['x0'][i, :],
+                                     mode='lines', line=dict(color='yellow'),
+                                     name='Surrogate',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
+
+            fig.update_yaxes(title_text=f' State {i + 1}', row=i + 1, col=1)
+            fig.update_xaxes(title_text='Times Stamp [s]', row=i + 1, col=1)
+
+
+
+        # show plot
+        fig.show()
 
         return None

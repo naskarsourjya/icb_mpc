@@ -3,9 +3,11 @@ import numpy as np
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from ._neuralnetwork import Regressor
+
+
 
 class narx():
     def __init__(self, n_x, n_u, order, t_step, set_seed = None, device = 'auto'):
@@ -146,13 +148,22 @@ class narx():
                          'epochs': []}
 
         # scaling the input
-        scaler = MinMaxScaler()
+        scaler = StandardScaler()
         scaler.fit(x_train.T)
 
         # nn init
         narx_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
                                output_size=self.n_x, hidden_layers=self.hidden_layers,
                                scaler=scaler, device=self.device)
+
+        # setting up Mean Squared Error as loss function for training
+        criterion = torch.nn.MSELoss()
+
+        # setting up optimiser for training
+        optimizer = torch.optim.AdamW(narx_model.parameters(), lr=self.learning_rate)
+
+        # scheduler setup
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
         # setting computation device
         self._set_device(torch_device= narx_model.torch_device)
@@ -175,15 +186,6 @@ class narx():
         validation_dataloader = torch.utils.data.DataLoader(validation_dataset,
                                                             batch_size=self.batch_size, shuffle=True,
                             generator=torch.Generator(device=narx_model.torch_device).manual_seed(self.set_seed))
-
-        # setting up Mean Squared Error as loss function for training
-        criterion = torch.nn.MSELoss()
-
-        # setting up optimiser for training
-        optimizer = torch.optim.Adam(narx_model.parameters(), lr=self.learning_rate)
-
-        # scheduler setup
-        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
         # main training loop
         for epoch in tqdm(range(self.epochs), desc= 'Training NARX'):

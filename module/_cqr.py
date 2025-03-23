@@ -1,14 +1,15 @@
 import numpy as np
+import pandas as pd
 import torch
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from ._neuralnetwork import Regressor, MergedModel
 
 class cqr_narx():
-    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=None):
+    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=None, debug=True):
         if set_seed is not None:
             np.random.seed(set_seed)
 
@@ -26,6 +27,8 @@ class cqr_narx():
         self._cqrinputs = None
         self.set_seed = set_seed
         self.history = None
+        self.log = None
+        self.data = {}
 
         # setting up default trainer settings
         self.setup_trainer()
@@ -39,6 +42,7 @@ class cqr_narx():
             'qr_ready': False,
             'cqr_ready': False,
             'initial_condition_ready': False,
+            'debug': debug
         }
 
         #end
@@ -144,6 +148,9 @@ class cqr_narx():
 
     def train_individual_qr(self, x_train, y_train):
 
+        # computing calibration error
+        error_train = self.surrogate_error(narx_input=x_train, narx_output=y_train)
+
         # init
         alpha = self.alpha
         n_x = self.n_x
@@ -159,7 +166,7 @@ class cqr_narx():
         n_q = len(quantiles)
 
         # scaling data
-        scaler = MinMaxScaler()
+        scaler = StandardScaler()
         scaler.fit(x_train.T)
 
         # creating a model for each quantile
@@ -169,6 +176,12 @@ class cqr_narx():
             cqr_model_n = Regressor(input_size=order * (n_x + n_u),
                                     output_size=n_x,
                                     hidden_layers=self.hidden_layers, scaler=scaler, device=self.device)
+
+            # setting up optimiser for training
+            optimizer = torch.optim.AdamW(cqr_model_n.parameters(), lr=self.learning_rate)
+
+            # scheduler setup
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
             # setting training history
             train_history = {'training_loss': [],
@@ -182,7 +195,7 @@ class cqr_narx():
 
             # converting datasets to tensors
             X_torch = torch.tensor(x_train.T, dtype=torch.float32)
-            Y_torch = torch.tensor(y_train.T, dtype=torch.float32)
+            Y_torch = torch.tensor(error_train.T, dtype=torch.float32)
 
             # Create TensorDataset
             dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
@@ -204,12 +217,6 @@ class cqr_narx():
                                                                 generator=torch.Generator(
                                                                     device=cqr_model_n.torch_device).manual_seed(
                                                                     self.set_seed))
-
-            # setting up optimiser for training
-            optimizer = torch.optim.AdamW(cqr_model_n.parameters(), lr=self.learning_rate)
-
-            # scheduler setup
-            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
             # main training loop
             for epoch in tqdm(range(self.epochs), desc=f'Training Cqr q= {quantile}'):
@@ -279,7 +286,7 @@ class cqr_narx():
 
         return None
 
-    def train_all_qr(self, x_train, y_train):
+    def train_all_qr_depreciate(self, x_train, y_train):
 
         # init
         models = []
@@ -306,6 +313,12 @@ class cqr_narx():
         cqr_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
                               output_size=self.n_x * n_q,
                               hidden_layers=self.hidden_layers, scaler=scaler, device=self.device)
+
+        # setting up optimiser for training
+        optimizer = torch.optim.AdamW(cqr_model.parameters(), lr=self.learning_rate)
+
+        # scheduler setup
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
         # setting computation device
         self._set_device(torch_device=cqr_model.torch_device)
@@ -337,12 +350,6 @@ class cqr_narx():
                                                             generator=torch.Generator(
                                                                 device=cqr_model.torch_device).manual_seed(
                                                                 self.set_seed))
-
-        # setting up optimiser for training
-        optimizer = torch.optim.Adam(cqr_model.parameters(), lr=self.learning_rate)
-
-        # scheduler setup
-        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
         # main training loop
         for epoch in tqdm(range(self.epochs), desc=f'Training All CQR'):
@@ -412,9 +419,28 @@ class cqr_narx():
         return None
 
 
+    def surrogate_error(self, narx_input, narx_output):
+
+        # setting default device
+        self._set_device(torch_device=self.narx.torch_device)
+
+        # preprosecssing
+        X_torch = torch.tensor(narx_input.T, dtype=torch.float32)
+
+        # making full model prediction
+        with torch.no_grad():
+            narx_pred = self.narx(X_torch).cpu().numpy().T
+
+        narx_error = narx_output-narx_pred
+
+        return narx_error
+
     def conform_qr(self, x_calib, y_calib):
         assert self.flags['qr_ready'] == True, \
             'CQR not found! Train or load CQR model!'
+
+        # computing calibration error
+        error_calib = self.surrogate_error(narx_input=x_calib, narx_output=y_calib)
 
         # storage in convenient varaibles
         n_x = self.n_x
@@ -422,7 +448,7 @@ class cqr_narx():
         low_quantile = self.low_quantile
         high_quantile = self.high_quantile
         alpha = self.alpha
-        n_samples = y_calib.shape[1]
+        n_samples = error_calib.shape[1]
 
         # scaling calibration data
         #x_calib_sc = self.scaler.transform(x_calib.T)
@@ -444,7 +470,7 @@ class cqr_narx():
             # conformalising one state at a time
             q_lo_xn = q_lo[j,:]
             q_hi_xn = q_hi[j, :]
-            Yi_xn = y_calib[j,:]
+            Yi_xn = error_calib[j,:]
 
             # Generating conformity scores
             Ei_xn = np.max(np.vstack([q_lo_xn - Yi_xn, Yi_xn - q_hi_xn]), axis = 0)
@@ -462,7 +488,10 @@ class cqr_narx():
                 Q1_alpha = np.vstack([Q1_alpha, Q_xn])
 
         # storage
-        self.Q1_alpha = torch.tensor(Q1_alpha)
+        self.Q1_alpha = torch.tensor(Q1_alpha, dtype=torch.float32)
+        self.data['cqr_calibration_inputs'] = x_calib
+        self.data['cqr_calibration_outputs'] = y_calib
+        self.data['cqr_calibration_errors'] = error_calib
 
         # update flag
         self.flags.update({
@@ -575,7 +604,7 @@ class cqr_narx():
         # storing simulation history
         if self.history==None:
             history = {}
-            history['x0'] =x0
+            history['x0_cqr'] =x0
             history['x0_cqr_high'] = x0_cqr_high
             history['x0_cqr_low'] = x0_cqr_low
             history['time'] = [0.0]
@@ -586,7 +615,7 @@ class cqr_narx():
         else:
             history = self.history
 
-            history['x0'] = np.hstack([history['x0'], x0])
+            history['x0_cqr'] = np.hstack([history['x0_cqr'], x0])
             history['x0_cqr_high'] = np.hstack([history['x0_cqr_high'], x0_cqr_high])
             history['x0_cqr_low'] = np.hstack([history['x0_cqr_low'], x0_cqr_low])
             history['time'].append(history['time'][-1] + self.t_step)
@@ -594,8 +623,54 @@ class cqr_narx():
 
             self.history = history
 
+        # logged val
+        if self.flags['debug']:
+            # storing simulation history
+            if self.log == None:
+                log = {}
+                log['X'] = X
+                log['time'] = [0.0]
+                self.log = log
+
+            else:
+                log = self.log
+                log['X'] = np.hstack([log['X'], X])
+                log['time'].append(log['time'][-1] + self.t_step)
+                self.log = log
+
         # return predictions
         return x0, x0_cqr_high, x0_cqr_low
+
+
+    def export_log(self, file_name = 'CQR_NARX Model Log.csv'):
+
+        assert self.flags['debug'], "Data not logged! Enable debug=True to access log."
+
+        # generating names for the dataframe
+        state_names = []
+        input_names = []
+        for o in range(self.order):
+            for n_xn in range(self.n_x):
+                state_name = f'state_{n_xn+1}_lag_{o}'
+                state_names.append(state_name)
+
+            for n_un in range(self.n_u):
+                input_name = f'input_{n_un+1}_lag_{o}'
+                input_names.append(input_name)
+
+        # dataset
+        col_names = ['time'] + state_names + input_names
+        data = np.hstack([np.vstack(self.log['time']),
+                          self.log['X'].T])
+
+        # Converting to dataframe
+        df = pd.DataFrame(data, columns=col_names)
+
+        # saving dataframe
+        df.to_csv(file_name, index=False)
+
+        # end
+        return None
 
 
     def _post_processing_old(self, y):
@@ -762,11 +837,12 @@ class cqr_narx():
 
         return None
 
-    def plot_qr_error(self, x_test, y_test, t_test):
+    def plot_qr_error(self, t_test):
 
         assert self.flags['qr_ready'], "Qunatile regressor not ready."
 
-
+        x_test = self.data['cqr_calibration_inputs']
+        y_test = self.data['cqr_calibration_errors']
 
         # init
         n_x = self.n_x
@@ -850,8 +926,6 @@ class cqr_narx():
     def plot_cqr_error(self, x_test, y_test, t_test):
         assert self.flags['qr_ready'], "Quantile regressor not ready."
         assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
-
-
 
         # Init
         order = self.order

@@ -2,22 +2,27 @@ import torch
 import do_mpc
 import casadi as ca
 import  numpy as np
-from sklearn.preprocessing import MinMaxScaler
+import pandas as pd
+from numpy.core.defchararray import index
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
 class Surrogate():
-    def __init__(self, n_x, n_u, order, t_step):
+    def __init__(self, n_x, n_u, order, t_step, debug= True):
 
         self.n_x = n_x
         self.n_u = n_u
         self.order = order
         self.t_step = t_step
+        self.history = None
+        self.log = None
 
         # generating flags
         self.flags = {
             'model_ready': False,
             'simulator_ready': False,
-            'initial_condition_ready': False
+            'initial_condition_ready': False,
+            'debug': debug
         }
 
         pass
@@ -111,17 +116,27 @@ class Surrogate():
 
     def scale_input_layer(self, input_layer, scaler):
 
-        assert isinstance(scaler, MinMaxScaler), (f"Only MinMaxScaler supported as of yet! "
-                                                  f"Scaler found is {scaler}, which is not supported.")
+        if isinstance(scaler, MinMaxScaler):
 
-        # extracting scaler info
-        X_min = scaler.data_min_  # Minimum values of original data
-        X_max = scaler.data_max_  # Maximum values of original data
-        X_scale = scaler.scale_  # Scaling factor (1 / (X_max - X_min))
-        X_min_target = scaler.min_  # Shift factor (used for transformation)
+            # extracting scaler info
+            X_min = scaler.data_min_  # Minimum values of original data
+            X_max = scaler.data_max_  # Maximum values of original data
+            X_scale = scaler.scale_  # Scaling factor (1 / (X_max - X_min))
+            X_min_target = scaler.min_  # Shift factor (used for transformation)
 
-        # final scaling
-        input_layer_scaled = X_min_target + X_scale * (input_layer - X_min)
+            # final scaling
+            input_layer_scaled = X_min_target + X_scale * (input_layer - X_min)
+
+        elif isinstance(scaler, StandardScaler):
+            mean = scaler.mean_
+            std = scaler.scale_
+
+            # findal scaling
+            input_layer_scaled = (input_layer - mean) / std
+
+        else:
+            raise ValueError(f"Only MinMaxScaler and StandardScaler supported as of yet! Scaler found is {scaler}, "
+                             f"which is not supported.")
 
         # end
         return input_layer_scaled
@@ -289,6 +304,79 @@ class Surrogate():
         #    self.states = self.reshape(new_states, shape=(self.n_x, -1))
         #    self._generate_initial_guess()
 
+        # storing simulation history
+        if self.history == None:
+            history = {}
+            history['x0'] = x0
+            history['time'] = [0.0]
+            history['u0'] = u0
+
+            self.history = history
+
+        else:
+            history = self.history
+
+            history['x0'] = np.hstack([history['x0'], x0])
+            history['time'].append(history['time'][-1] + self.t_step)
+            history['u0'] = np.hstack([history['u0'], u0])
+
+            self.history = history
+
+
+        if self.flags['debug']:
+            # storing simulation history
+            if self.log == None:
+                log = {}
+                log['x_full'] = x_full
+                log['u0'] = u0
+                log['time'] = [0.0]
+                self.log = log
+
+            else:
+                log = self.log
+                log['x_full'] = np.hstack([log['x_full'], x_full])
+                log['u0'] = np.hstack([log['u0'], u0])
+                log['time'].append(log['time'][-1] + self.t_step)
+                self.log = log
+
         return x0
+
+
+    def export_log(self, file_name = 'Surrogate Model Log.csv'):
+
+        assert self.flags['debug'], "Data not logged! Enable debug=True to access log."
+
+        # generating names for the dataframe
+        state_names = []
+        input_names = []
+        for o in range(self.order):
+            for n_xn in range(self.n_x):
+                state_name = f'state_{n_xn+1}_lag_{o}'
+                state_names.append(state_name)
+
+            for n_un in range(self.n_u):
+                input_name = f'input_{n_un+1}_lag_{o}'
+                input_names.append(input_name)
+
+        # dataset
+        col_names = ['time'] + state_names + input_names
+        data = np.hstack([np.vstack(self.log['time']),
+                          self.log['x_full'].T[:, :self.order*self.n_x],
+                          self.log['u0'].T,
+                          self.log['x_full'].T[:, self.order*self.n_x:]])
+
+        # Converting to dataframe
+        df = pd.DataFrame(data, columns=col_names)
+
+        # saving dataframe
+        df.to_csv(file_name, index=False)
+
+        # end
+        return None
+
+
+
+
+
 
 

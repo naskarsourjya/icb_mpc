@@ -1,118 +1,119 @@
 import torch
 import torch.nn as nn
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
 class Regressor(nn.Module):
     def __init__(self, input_size, output_size, hidden_layers, scaler=None, device='auto'):
         super(Regressor, self).__init__()
 
-        # set device
+        # Set device
         self._set_device(device=device)
 
         # Build the neural network dynamically based on the number of layers
         layers = []
 
-        # Hidden layers
-        for i in range(len(hidden_layers)):
-            # Input layer
-            if i == 0:
-                layers.append(nn.Linear(input_size, hidden_layers[i]))
-                layers.append(nn.Tanh())
+        # Input layer (from input_size to the first hidden layer)
+        layers.append(nn.Linear(input_size, hidden_layers[0]))
+        layers.append(nn.Tanh())
 
-            # middle layers
-            else:
-                layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
-                layers.append(nn.Tanh())
+        # Hidden layers (from one hidden layer to the next)
+        for i in range(1, len(hidden_layers)):
+            layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
+            layers.append(nn.Tanh())
 
-        # Output layer
-        layers.append(nn.Linear(hidden_layers[-1], output_size))  # Predicts a single value
+        # Output layer (from the last hidden layer to output_size)
+        layers.append(nn.Linear(hidden_layers[-1], output_size))
 
-        # Combine all layers
-        self.network = nn.Sequential(*layers)
+        # Combine all layers into a sequential model
+        self.network = nn.Sequential(*layers).to(self.torch_device)  # Move network to device
 
-        # stores number of parameters
+        # Store number of parameters
         self.n_params = self.count_parameters()
 
-        # setup scalar
-        if scaler != None:
+        # Setup scaler
+        if scaler is not None:
             self.setup_scaler(scaler)
             self.scaler_flag = True
-
         else:
             self.scaler_flag = False
 
-        # end of init
-
-
     def setup_scaler(self, scaler):
+        if isinstance(scaler, MinMaxScaler):
 
-        assert isinstance(scaler, MinMaxScaler), (f"Only MinMaxScaler supported as of yet! "
-                                                  f"Scaler found is {scaler}, which is not supported.")
+            # Extract scaler info and move tensors to the correct device
+            X_min = torch.tensor(scaler.data_min_, dtype=torch.float32).to(self.torch_device)  # Minimum values
+            X_max = torch.tensor(scaler.data_max_, dtype=torch.float32).to(self.torch_device)  # Maximum values
+            X_scale = torch.tensor(scaler.scale_, dtype=torch.float32).to(self.torch_device)  # Scaling factor
+            X_min_target = torch.tensor(scaler.min_, dtype=torch.float32).to(self.torch_device)  # Shift factor
 
-        # extracting scaler info
-        X_min = torch.tensor(scaler.data_min_, dtype=torch.float32)  # Minimum values of original data
-        X_max = torch.tensor(scaler.data_max_, dtype=torch.float32)  # Maximum values of original data
-        X_scale = torch.tensor(scaler.scale_, dtype=torch.float32)  # Scaling factor (1 / (X_max - X_min))
-        X_min_target = torch.tensor(scaler.min_, dtype=torch.float32)  # Shift factor (used for transformation)
+            # Store scaler info
+            self.scaler = {
+                'scaler': scaler,
+                'X_min': X_min,
+                'X_max': X_max,
+                'X_scale': X_scale,
+                'X_min_target': X_min_target
+            }
 
-        # storage
-        self.scaler = {'scaler': scaler,
-                       'X_min': X_min,
-                       'X_max': X_max,
-                       'X_scale': X_scale,
-                       'X_min_target': X_min_target}
+        elif isinstance(scaler, StandardScaler):
 
-        # end
+            # Extract scaler info and move tensors to the correct device
+            mean = torch.tensor(scaler.mean_, dtype=torch.float32).to(self.torch_device)  # Mean values
+            std = torch.tensor(scaler.scale_, dtype=torch.float32).to(self.torch_device)  # Standard deviations
+
+            # Store scaler info
+            self.scaler = {
+                'scaler': scaler,
+                'mean': mean,
+                'std': std
+            }
+
+        else:
+            raise ValueError(f"Only MinMaxScaler or StandardScaler supported as of yet! "
+                             f"Scaler found is {scaler}, which is not supported.")
+
         return None
 
 
     def forward(self, x):
+        # Ensure input tensor is on the correct device
+        x = x.to(self.torch_device)
 
-        # init
-        X_min_target = self.scaler['X_min_target']
-        X_scale = self.scaler['X_scale']
-        X_min = self.scaler['X_min']
+        # Scaling
+        if self.scaler_flag and isinstance(self.scaler['scaler'], MinMaxScaler):
+            X_min_target = self.scaler['X_min_target']
+            X_scale = self.scaler['X_scale']
+            X_min = self.scaler['X_min']
+            x_scaled = X_min_target + X_scale * (x - X_min)
 
-        # scaling
-        x_scaled = X_min_target + X_scale * (x - X_min)
+        elif self.scaler_flag and isinstance(self.scaler['scaler'], StandardScaler):
+            mean = self.scaler['mean']
+            std = self.scaler['std']
+            x_scaled = (x - mean) / std
 
-        # returns current state
+        else:
+            x_scaled = x
+
+        # Forward pass through the network
         return self.network(x_scaled)
 
-
     def count_parameters(self):
-        """
-        Count the total number of weights and biases in the network.
-        Returns:
-            int: Total number of parameters.
-        """
+        """Count the total number of weights and biases in the network."""
         return sum(p.numel() for p in self.network.parameters())
 
-
     def _set_device(self, device):
-
-        # auto choose gpu if gpu is available
+        # Auto choose GPU if available
         if device == 'auto':
-
-            # 1st priority
             if torch.cuda.is_available():
                 device = 'cuda'
-
-            # 2nd priority
             #elif torch.backends.mps.is_available():
             #    device = 'mps'
-
-            # fallback
             else:
                 device = 'cpu'
 
-        # torch default device is set
+        # Set device
         self.torch_device = torch.device(device)
-        torch.set_default_device(self.torch_device)
-
-        # end
-        return None
 
 
 class MergedModel(nn.Module):
