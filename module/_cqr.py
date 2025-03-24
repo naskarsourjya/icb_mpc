@@ -585,12 +585,12 @@ class cqr_narx():
         x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
 
         # pushing oldest state out of system and inserting the current state
-        new_states = np.vstack([x0, states[0:(order-1)*n_x, :]])
+        new_states = np.vstack([states[n_x:(order)*n_x, :], x0])
 
         if order>1:
 
             # pushing oldest input out of system and inserting the current input
-            new_inputs = np.vstack([u0, inputs[0:(order-2)*n_u, :]])
+            new_inputs = np.vstack([inputs[n_u:(order-1)*n_u, :], u0])
 
             # setting new initial guess by removing the last timestamp data
             self.states=self.reshape(new_states, shape=(n_x, -1))
@@ -651,11 +651,11 @@ class cqr_narx():
         input_names = []
         for o in range(self.order):
             for n_xn in range(self.n_x):
-                state_name = f'state_{n_xn+1}_lag_{o}'
+                state_name = f'state_{n_xn+1}_lag_{self.order-1-o}'
                 state_names.append(state_name)
 
             for n_un in range(self.n_u):
-                input_name = f'input_{n_un+1}_lag_{o}'
+                input_name = f'input_{n_un+1}_lag_{self.order-1-o}'
                 input_names.append(input_name)
 
         # dataset

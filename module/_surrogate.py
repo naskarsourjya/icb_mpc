@@ -116,7 +116,10 @@ class Surrogate():
 
     def scale_input_layer(self, input_layer, scaler):
 
-        if isinstance(scaler, MinMaxScaler):
+        if scaler == None:
+            input_layer_scaled = input_layer
+
+        elif isinstance(scaler, MinMaxScaler):
 
             # extracting scaler info
             X_min = scaler.data_min_  # Minimum values of original data
@@ -351,11 +354,11 @@ class Surrogate():
         input_names = []
         for o in range(self.order):
             for n_xn in range(self.n_x):
-                state_name = f'state_{n_xn+1}_lag_{o}'
+                state_name = f'state_{n_xn+1}_lag_{self.order-1-o}'
                 state_names.append(state_name)
 
             for n_un in range(self.n_u):
-                input_name = f'input_{n_un+1}_lag_{o}'
+                input_name = f'input_{n_un+1}_lag_{self.order-1-o}'
                 input_names.append(input_name)
 
         # dataset

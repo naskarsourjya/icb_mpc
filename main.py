@@ -19,7 +19,7 @@ dm.data_splitter(order=3)
 
 #su.narx_trainer(hidden_layers=[10], batch_size=320,
 #          learning_rate=0.1, epochs= 100)
-dm.narx_trainer(hidden_layers=[1], batch_size=320,
+dm.narx_trainer(hidden_layers=[1], batch_size=1000,
           learning_rate=0.1, epochs= 1000, scheduler_flag=True, device=default_device)
 #su.plot_narx_training_history()
 #ann.save_narx(filename='data\\narx10_10_s1000_o1.pkl')
@@ -38,7 +38,7 @@ dm.narx_trainer(hidden_layers=[1], batch_size=320,
 
 #print(su.simulator_make_step(u0=np.array([[0.9]])))
 
-dm.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320,
+dm.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=1000,
              lr_threshold=1e-7, epochs=1000, scheduler_flag=True, device=default_device)
 #su.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320)
 #su.cqr.plot_qr_training_history_plotly()

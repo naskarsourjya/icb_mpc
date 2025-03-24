@@ -220,8 +220,8 @@ class MPC_Brancher():
         self.mpc.bounds['lower', '_x', 'system_state'] = prev_lbx
 
         # shifitng initial condition
-        next_state_history = np.vstack([x0, states[0:n_x * (order - 1)]])
-        next_input_history = np.vstack([u0, inputs[0:n_u * (order - 2)]])
+        next_state_history = np.vstack([states[n_x:n_x * (order)], x0])
+        next_input_history = np.vstack([inputs[n_u:n_u * (order - 1)], u0])
 
         # pushing it to class
         self.states = self.reshape(next_state_history, shape=(n_x, -1))
