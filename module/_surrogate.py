@@ -3,6 +3,7 @@ import do_mpc
 import casadi as ca
 import  numpy as np
 import pandas as pd
+import re
 from numpy.core.defchararray import index
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
@@ -27,7 +28,7 @@ class Surrogate():
 
         pass
 
-    def narx_2_dompc_model(self, narx):
+    def narx_2_dompc_model_deprecated(self, narx):
 
         # init
         model = do_mpc.model.Model(model_type='discrete', symvar_type='SX')
@@ -114,6 +115,121 @@ class Surrogate():
         return model
 
 
+    def narx_2_dompc_model(self, narx, verbose = True):
+
+        # init
+        model = do_mpc.model.Model(model_type='discrete', symvar_type='SX')
+        layer_counter = 0
+
+        # variable setup
+        d_states = {}
+        d_inputs = {}
+        input_layer_list = []
+        d_state_list = []
+
+        for var_name in narx.x_label:
+            if var_name.startswith('input') and var_name.endswith('lag_0'):
+                d_inputs[var_name] = model.set_variable(var_type='_u', var_name=var_name, shape=(1, 1))
+                input_layer_list.append(d_inputs[var_name])
+            else:
+                d_states[var_name] = model.set_variable(var_type='_x', var_name=var_name, shape=(1, 1))
+                input_layer_list.append(d_states[var_name])
+                d_state_list.append(var_name)
+
+        for i, var in enumerate(input_layer_list):
+            if i==0:
+                input_layer = var
+            else:
+                input_layer = ca.vertcat(input_layer, var)
+
+        # used by random state tracking algo
+        state_ref = model.set_variable(var_type='_tvp', var_name='state_ref', shape=(self.n_x, 1))
+
+        # scaled input layer
+        input_layer_scaled = self.scale_input_layer(input_layer, narx.scaler)
+
+        # reading the layers and the biases
+        for layer in narx.model.network:
+
+            # linear transformations
+            if isinstance(layer, torch.nn.Linear):
+                # extracting weight and bias
+                weight = layer.weight.cpu().detach().numpy()
+                bias = layer.bias.cpu().detach().numpy()
+
+                if layer_counter == 0:
+                    output_layer = ca.mtimes(weight, input_layer_scaled) + bias
+
+                else:
+                    output_layer = ca.mtimes(weight, output_layer) + bias
+
+                layer_counter += 1
+
+            elif isinstance(layer, torch.nn.Tanh):
+                output_layer = ca.tanh(output_layer)
+
+            else:
+                raise RuntimeError('{} not supported!'.format(layer))
+
+        # setting up rhs
+        rhs_list = []
+        for var_name in d_state_list:
+
+            # init
+            indices = self.extract_numbers(var_name)
+
+            # model equation
+            if var_name.startswith('state') and var_name.endswith('lag_1'):
+                rhs_n = output_layer[indices[0]-1, 0]
+                rhs_list.append(rhs_n)
+                model.set_rhs(var_name, rhs_n)
+                if verbose:
+                    print(f"{var_name} <<--- {rhs_n}")
+
+
+            # state shifting
+            elif var_name.startswith('state'):
+                rhs_n = d_states[f'state_{indices[0]}_lag_{indices[1]-1}']
+                rhs_list.append(rhs_n)
+                model.set_rhs(var_name, rhs_n)
+                if verbose:
+                    print(f"{var_name} <<--- {rhs_n}")
+
+            # input
+            elif var_name.startswith('input') and var_name.endswith('lag_1'):
+                rhs_n = d_inputs[f'input_{indices[0]}_lag_0']
+                rhs_list.append(rhs_n)
+                model.set_rhs(var_name, rhs_n)
+                if verbose:
+                    print(f"{var_name} <<--- {rhs_n}")
+
+            elif var_name.startswith('input'):
+                rhs_n = d_states[f'input_{indices[0]}_lag_{indices[1] - 1}']
+                rhs_list.append(rhs_n)
+                model.set_rhs(var_name, rhs_n)
+                if verbose:
+                    print(f"{var_name} <<--- {rhs_n}")
+
+        # setting rhs
+        #model.set_rhs('system_state', rhs)
+        model.setup()
+
+        # storage
+        self.model = model
+
+        # flag update
+        self.flags.update({
+            'model_ready': True,
+        })
+
+        # end
+        return model
+
+    def extract_numbers(self, var_name):
+        numbers = re.findall(r'\d+', var_name)  # Finds all numbers in the string
+        return [int(num) for num in numbers]  # Convert them to integers
+
+
     def scale_input_layer(self, input_layer, scaler):
 
         if scaler == None:
@@ -187,10 +303,10 @@ class Surrogate():
     def states(self, val):
         assert isinstance(val, np.ndarray), "states must be a numpy.array."
 
-        assert val.shape[1] == self.order, \
+        assert val.shape[0] == self.order, \
             'Number of samples must be equal to the order of the NARX model!'
 
-        assert val.shape[0] == self.n_x, (
+        assert val.shape[1] == self.n_x, (
             'Expected number of states is: {}, but found {}'.format(self.n_x, val.shape[0]))
 
         # storage
@@ -207,10 +323,10 @@ class Surrogate():
         if self.order > 1:
             assert isinstance(val, np.ndarray), "inputs must be a numpy.array."
 
-            assert self.order - 1 == val.shape[1], \
+            assert self.order - 1 == val.shape[0], \
                 'Number of samples for inputs should be (order-1) !'
 
-            assert val.shape[0] == self.n_u, (
+            assert val.shape[1] == self.n_u, (
                 'Expected number of inputs is: {}, but found {}'.format(self.n_u, val.shape[0]))
 
             # storage
@@ -229,6 +345,9 @@ class Surrogate():
         self.simulator.x0 = initial_cond
         self.simulator.set_initial_guess()
 
+        # init time
+        self.t0 = 0.0
+
         # flag update
         self.flags.update({
             'initial_condition_ready': True,
@@ -245,25 +364,14 @@ class Surrogate():
         states = self.states
         inputs = self.inputs
 
-        state_order = self.order
-        input_order = self.order - 1
-
-        state_samples = states.shape[1]
-        input_samples = inputs.shape[1]
-
-        # ensuring this is the current input
-        # stacking states and inputs with order
-        order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
-
         # if order is 2 or more, only then previous inputs are needed
         if self.order > 1:
-            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
-
-            # stacking states and inputs for narx model
-            initial_cond = np.vstack([order_states, order_inputs])
+            init_states = states.reshape((-1, 1))
+            init_inputs = inputs.reshape((-1, 1))
+            initial_cond = np.vstack([init_states, init_inputs])
 
         else:
-            initial_cond = order_states
+            initial_cond = states.reshape((-1, 1))
 
         #storage
         self.initial_cond = initial_cond
@@ -310,37 +418,23 @@ class Surrogate():
         # storing simulation history
         if self.history == None:
             history = {}
-            history['x0'] = x0
-            history['time'] = [0.0]
-            history['u0'] = u0
+            history['x0'] = x0.reshape((1, -1))
+            history['time'] = np.array([[self.t0]])
+            history['u0'] = u0.reshape((1, -1))
 
             self.history = history
 
         else:
             history = self.history
 
-            history['x0'] = np.hstack([history['x0'], x0])
-            history['time'].append(history['time'][-1] + self.t_step)
-            history['u0'] = np.hstack([history['u0'], u0])
+            history['x0'] = np.vstack([history['x0'], x0.reshape((1, -1))])
+            history['time'] = np.vstack([history['time'], self.t0])
+            history['u0'] = np.vstack([history['u0'], u0.reshape((1, -1))])
 
             self.history = history
 
-
-        if self.flags['debug']:
-            # storing simulation history
-            if self.log == None:
-                log = {}
-                log['x_full'] = x_full
-                log['u0'] = u0
-                log['time'] = [0.0]
-                self.log = log
-
-            else:
-                log = self.log
-                log['x_full'] = np.hstack([log['x_full'], x_full])
-                log['u0'] = np.hstack([log['u0'], u0])
-                log['time'].append(log['time'][-1] + self.t_step)
-                self.log = log
+        # step up time
+        self.t0 = self.t0 + self.t_step
 
         return x0
 
@@ -354,19 +448,19 @@ class Surrogate():
         input_names = []
         for o in range(self.order):
             for n_xn in range(self.n_x):
-                state_name = f'state_{n_xn+1}_lag_{self.order-1-o}'
+                state_name = f'state_{n_xn+1}_lag_{o+1}'
                 state_names.append(state_name)
 
             for n_un in range(self.n_u):
-                input_name = f'input_{n_un+1}_lag_{self.order-1-o}'
+                input_name = f'input_{n_un+1}_lag_{o}'
                 input_names.append(input_name)
 
         # dataset
         col_names = ['time'] + state_names + input_names
-        data = np.hstack([np.vstack(self.log['time']),
-                          self.log['x_full'].T[:, :self.order*self.n_x],
-                          self.log['u0'].T,
-                          self.log['x_full'].T[:, self.order*self.n_x:]])
+        data = np.hstack([self.history['time'],
+                          self.simulator.data['_x'][:, 0:self.order*self.n_x],
+                          self.history['u0'],
+                          self.simulator.data['_x'][:, self.order*self.n_x:]])
 
         # Converting to dataframe
         df = pd.DataFrame(data, columns=col_names)

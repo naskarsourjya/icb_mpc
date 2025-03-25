@@ -1,4 +1,7 @@
+from unittest.mock import inplace
+
 import numpy as np
+import pandas as pd
 import pickle
 from sklearn.model_selection import train_test_split
 import do_mpc
@@ -49,13 +52,6 @@ class DataManager(plotter):
 
         # end of init
 
-    def reshape(self, array, shape):
-
-        # rows and columns
-        rows, cols = shape
-
-        # end
-        return array.reshape(cols, rows).T
 
     def random_state_sampler(self, system, n_samples):
         assert self.flags['data_stored'] == False, \
@@ -114,6 +110,26 @@ class DataManager(plotter):
 
         return None
 
+    def numpy_2_df(self, data_x, data_u, data_t):
+
+        # states
+        x_names = [f'state_{i + 1}' for i in range(data_x.shape[1])]
+        df_x = pd.DataFrame(data_x, columns=x_names)
+
+        # inputs
+        u_names = [f'input_{i + 1}' for i in range(data_u.shape[1])]
+        df_u = pd.DataFrame(data_u, columns=u_names)
+
+        # time
+        t_names = ['time']
+        df_t = pd.DataFrame(data_t, columns=t_names)
+
+        # final df
+        df = pd.concat([df_t, df_x, df_u], axis=1)
+
+        return df
+
+
     def random_input_sampler(self, system, n_samples, change_probability = 0.7):
         assert self.flags['data_stored'] == False, \
             'Data already exists! Create a new object to create new trajectory.'
@@ -124,22 +140,17 @@ class DataManager(plotter):
         estimator = do_mpc.estimator.StateFeedback(model= model)
 
         # random initial state
-        #x0 = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
-        x0 = self.reshape(np.random.uniform(system.lbx, system.ubx), shape= (model.n_x, 1))
+        x0_init = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
 
-        simulator.x0 = x0
+        simulator.x0 = x0_init
         simulator.set_initial_guess()
-
-        data_x = [x0]
-        data_u = [np.full((model.n_u, 1), np.nan)]
-        data_t = [np.array([[0]])]
 
         for i in tqdm(range(n_samples), desc= 'Generating data'):
 
             # executes if the system decides for a change
             if np.random.rand() < change_probability:
                 #u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1,1))
-                u0 = self.reshape(np.random.uniform(system.lbu, system.ubu), shape=(-1,1))
+                u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1,1))
                 u_prev = u0
 
             # executes if the system decides to not change
@@ -149,20 +160,12 @@ class DataManager(plotter):
             y_next = simulator.make_step(u0)
             x0 = estimator.make_step(y_next)
 
-            # data storage
-            data_x.append(x0)
-            data_u.append(u0)
-            data_t.append(data_t[-1]+system.t_step)
-
-
-        data_x = np.concatenate(data_x, axis=1)
-        data_u = np.concatenate(data_u, axis=1)
-        data_t = np.concatenate(data_t, axis=1)
+        df = self.numpy_2_df(data_x= simulator.data['_x'],
+                             data_u= simulator.data['_u'],
+                             data_t= simulator.data['_time'])
 
         # storage
-        self.data['states'] = data_x
-        self.data['inputs'] = data_u
-        self.data['time'] = data_t
+        self.data['simulation'] = df
         self.data['n_samples'] = n_samples
         self.data['n_x'] = model.n_x
         self.data['n_u'] = model.n_u
@@ -215,7 +218,7 @@ class DataManager(plotter):
         return None
 
 
-    def input_preprocessing(self, states, inputs):
+    def input_preprocessing_deprecate(self, states, inputs):
         assert states.shape[0] == self.data['n_x'], (
             'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
 
@@ -237,7 +240,7 @@ class DataManager(plotter):
         return narx_input
 
 
-    def output_preprocessing(self, states):
+    def output_preprocessing_deprecate(self, states):
         assert states.shape[0] == self.data['n_x'], (
             'Expected number of states is: {}, but found {}'.format(self.data['n_x'], states.shape[0]))
 
@@ -246,6 +249,51 @@ class DataManager(plotter):
 
         # end
         return narx_output
+
+
+    def simulation_2_narx(self, df, order):
+
+        # init
+        df_new = df.copy()
+        x_names = [f'state_{i + 1}' for i in range(self.data['n_x'])]
+        u_names = [f'input_{i + 1}' for i in range(self.data['n_u'])]
+
+        # Add lagged columns
+        for i in range(order+1):
+            for col in x_names:
+                col_name = f"{col}_lag_{i}"
+                df_new[col_name] = df_new[col].shift(i)
+
+        # Add lagged columns
+        for i in range(order):
+            for col in u_names:
+                col_name = f"{col}_lag_{i}"
+                df_new[col_name] = df_new[col].shift(i)
+
+        # clean up
+        df_new.drop(columns=x_names+u_names, inplace= True)
+        df_new.dropna(inplace=True)
+        df_new.reset_index(inplace=True, drop=True)
+
+        # labels for dataset
+        y_label = [f'state_{i + 1}_lag_0' for i in range(self.data['n_x'])]
+        x_label=[]
+        for i in range(order+1):
+            for j, col in enumerate(x_names):
+                if i > 0:
+                    col_name = f"{col}_lag_{i}"
+                    x_label.append(col_name)
+        for i in range(order):
+            for col in u_names:
+                col_name = f"{col}_lag_{i}"
+                x_label.append(col_name)
+
+        # storage
+        self.data['x_label'] = x_label
+        self.data['y_label'] = y_label
+
+        # end
+        return df_new
 
 
     def data_splitter(self, order, narx_train= 0.4,
@@ -259,49 +307,40 @@ class DataManager(plotter):
 
         # store order
         self.data['order'] = order
-
-        # concatinating the deta with
-        X = self.input_preprocessing(states=self.data['states'], inputs=self.data['inputs']).T
-        Y = self.output_preprocessing(states=self.data['states']).T
-        t = self.data['time'][:, order:].T
-
         sets = ['narx_train', 'cqr_train', 'cqr_calibration', 'test']
         ratios = [narx_train, cqr_train, cqr_calibration, test]
 
+        # narxing data
+        df = self.simulation_2_narx(df=self.data['simulation'], order=order)
+
+        # generating splits
         for i, set in enumerate(sets[:-1]):
-            input_name = set + '_inputs'
-            output_name = set + '_outputs'
-            time_name = set + '_timestamps'
 
             ratio = ratios[i] / sum(ratios[i:])
+
+            # last split
             if i == len(sets) -2:
-                last_input_name = sets[-1] + '_inputs'
-                last_output_name = sets[-1] + '_outputs'
-                last_time_name = sets[-1] + '_timestamps'
+                self.data[sets[-1]], self.data[set] = train_test_split(df, test_size=ratio,
+                                                                       random_state=self.set_seed)
 
-                (self.data[last_input_name], self.data[input_name], self.data[last_output_name], self.data[output_name],
-                 self.data[last_time_name], self.data[time_name]) = (
-                    train_test_split(X, Y, t, test_size=ratio, random_state=self.set_seed))
+                # resetting indices
+                self.data[set].reset_index(inplace=True, drop=True)
+                self.data[sets[-1]].reset_index(inplace=True, drop=True)
 
-
+            # every other split
             else:
-                X, self.data[input_name], Y, self.data[output_name], t, self.data[time_name] = (
-                        train_test_split(X, Y, t, test_size=ratio, random_state=self.set_seed))
+                df, self.data[set] = (train_test_split(df, test_size=ratio, random_state=self.set_seed))
 
-        for set in sets:
-            input_name = set + '_inputs'
-            output_name = set + '_outputs'
-            time_name = set + '_timestamps'
+                # resetting indices
+                self.data[set].reset_index(inplace=True, drop=True)
 
-            self.data[input_name] = self.data[input_name].T
-            self.data[output_name] = self.data[output_name].T
-            self.data[time_name] = self.data[time_name].T
 
         # flag update
         self.flags.update({
             'data_split': True,
         })
 
+        # end
         return None
 
 
@@ -317,8 +356,9 @@ class DataManager(plotter):
         assert self.flags['data_stored'] == True, \
             'Data does not exist! Generate or load data!'
 
-        x_train = self.data['narx_train_inputs']
-        y_train = self.data['narx_train_outputs']
+        df = self.data['narx_train']
+        x_train = df[self.data['x_label']]
+        y_train = df[self.data['y_label']]
 
         self.narx = narx(n_x=self.data['n_x'], n_u=self.data['n_u'], order= self.data['order'],
                          t_step=self.data['t_step'], set_seed=self.set_seed, device=device)
@@ -409,49 +449,6 @@ class DataManager(plotter):
         return None
 
 
-    def surrogate_error_depreciate(self, cqr_train_inputs, cqr_train_outputs):
-        assert self.flags['data_split'] == True, 'Split data not found!'
-
-        # init
-        error = []
-        n_samples = cqr_train_inputs.shape[1]
-
-        # calculating error
-        for i in tqdm(range(n_samples), desc= 'Calculating surrogate model error'):
-
-            # extracting individual elements
-            states = self.reshape(cqr_train_inputs[0:self.data['order']*self.data['n_x'],i],
-                                  shape=(self.data['n_x'], self.data['order']))
-            inputs = self.reshape(cqr_train_inputs[self.data['order'] * self.data['n_x']:, i],
-                                  shape=(self.data['n_u'], self.data['order']))
-            output = self.reshape(cqr_train_outputs[:, i],
-                                  shape=(self.data['n_x'], 1))
-
-
-            # extracting inputs
-            input_history = inputs[:, 0:-1]
-            input = self.reshape(inputs[:, -1], shape=(-1, 1))
-
-            # initiating system
-            self.narx_2_dompc()
-            self.surrogate.states=states
-            self.surrogate.inputs=input_history
-            self.surrogate.set_initial_guess()
-
-            # simulating system
-            x0 = self.surrogate.make_step(u0= input)
-
-            # appending error
-            delta = output - x0
-            error.append(delta)
-
-        # error np array
-        error = np.concatenate(error, axis=1)
-
-        # end
-        return error
-
-
     def train_individual_qr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
                   validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8):
 
@@ -459,8 +456,9 @@ class DataManager(plotter):
         assert 0 < alpha < 1, "All alpha must be between 0 and 1"
 
         # training data
-        x_train = self.data['cqr_train_inputs']
-        y_train = self.data['cqr_train_outputs']
+        df = self.data['cqr_train']
+        x_train = df[self.data['x_label']]
+        y_train = df[self.data['y_label']]
 
         # cqr class init
         self.cqr = cqr_narx(narx= self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
@@ -476,8 +474,9 @@ class DataManager(plotter):
         self.cqr.train_individual_qr(x_train=x_train, y_train=y_train)
 
         # calibration data
-        x_calib = self.data['cqr_calibration_inputs']
-        y_calib = self.data['cqr_calibration_outputs']
+        df = self.data['cqr_calibration']
+        x_calib = df[self.data['x_label']]
+        y_calib = df[self.data['y_label']]
 
         # conformalising
         self.cqr.conform_qr(x_calib=x_calib, y_calib=y_calib)
@@ -486,60 +485,24 @@ class DataManager(plotter):
         return None
 
 
-    def train_all_qr_depreciate(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
-                  validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8):
-
-        assert self.flags['data_split'] == True, 'Split data not found!'
-        assert 0 < alpha < 1, "All alpha must be between 0 and 1"
-
-        # calculate the surrogate model error on cqr training data
-        self.data['cqr_train_errors'] = self.surrogate_error(cqr_train_inputs= self.data['cqr_train_inputs'],
-                                                             cqr_train_outputs= self.data['cqr_train_outputs'])
-
-        x_train = self.data['cqr_train_inputs']
-        y_train = self.data['cqr_train_errors']
-
-        # cqr class init
-        self.cqr = cqr_narx(narx=self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
-                            order=self.data['order'], t_step=self.data['t_step'], lbx=self.data['lbx'],
-                            ubx=self.data['ubx'], device=device, set_seed=self.set_seed)
-
-        # pushing trainer settings
-        self.cqr.setup_trainer(hidden_layers=hidden_layers, learning_rate=learning_rate, batch_size=batch_size,
-                               validation_split=validation_split, scheduler_flag=scheduler_flag, epochs=epochs,
-                               lr_threshold=lr_threshold)
-
-        # pushing data
-        self.cqr.train_all_qr(x_train=x_train, y_train=y_train)
-
-        # calculate the surrogate model error on cqr calibration data
-        self.data['cqr_calibration_errors'] = self.surrogate_error(cqr_train_inputs=self.data['cqr_calibration_inputs'],
-                                                                   cqr_train_outputs=self.data[
-                                                                       'cqr_calibration_outputs'])
-
-        # storage in convenient varaibles
-        x_calib = self.data['cqr_calibration_inputs']
-        y_calib = self.data['cqr_calibration_errors']
-
-        self.cqr.conform_qr(x_calib=x_calib, y_calib=y_calib)
-
-        # end
-        return None
-
     def cqr_plot_qr_error(self):
 
-        t_calib = self.data['cqr_calibration_timestamps']
+        df = self.data['cqr_calibration']
 
-        self.cqr.plot_qr_error(t_test= t_calib)
+        t_calib = df['time']
+
+        self.cqr.plot_qr_error(t_test= t_calib.to_numpy())
 
         return None
 
     def plot_cqr_error_plotly(self):
 
+        df = self.data['cqr_calibration']
+
         # Extracting data
-        x_test = self.data['test_inputs']
-        y_test = self.data['test_outputs']
-        t_test = self.data['test_timestamps']
+        x_test = df[self.data['x_label']]
+        y_test = df[self.data['y_label']]
+        t_test = df['time']
 
         self.cqr.plot_cqr_error(x_test= x_test, y_test=y_test, t_test=t_test)
 
@@ -750,17 +713,25 @@ class DataManager(plotter):
 
         # extracting random initial point from test data
         # take initial guess from test data
-        narx_inputs = self.data['test_inputs']
+        df = self.data['test']
+        narx_inputs = df[self.data['x_label']]
         n_x = self.data['n_x']
         n_u = self.data['n_u']
         order = self.data['order']
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
 
         # extracting random column
-        states_history = narx_inputs[0:n_x * order, rnd_col]
-        inputs_n = narx_inputs[n_x * order:, rnd_col]
-        u0 = inputs_n[0:n_u]
-        inputs_history = inputs_n[n_u:]
+        #states_history = narx_inputs.to_numpy()[rnd_col, 0:n_x * order]
+        #inputs_n = narx_inputs.to_numpy()[rnd_col, n_x * order:]
+        #u0 = inputs_n[0:n_u]
+        #inputs_history = inputs_n[n_u:]
+
+        # extracting random column
+        states_history = narx_inputs.loc[rnd_col,
+        [var_name for var_name in self.data['x_label'] if var_name.startswith('state')]].to_numpy()
+        inputs_history = narx_inputs.loc[rnd_col,
+        [var_name for var_name in self.data['x_label']
+         if var_name.startswith('input') and not var_name.endswith('lag_0')]].to_numpy()
 
         # initial cond
         real_simulator.x0 = states_history[0:n_x]
@@ -768,12 +739,12 @@ class DataManager(plotter):
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            cqr_model.states = self.reshape(states_history, shape=(n_x, -1))
-            cqr_model.inputs = self.reshape(inputs_history, shape=(n_u, -1))
+            cqr_model.states = states_history.reshape((-1, n_x))
+            cqr_model.inputs = inputs_history.reshape((-1, n_u))
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = self.reshape(states_history, shape=(n_x, -1))
-            surrogate_model.inputs = self.reshape(inputs_history, shape=(n_u, -1))
+            surrogate_model.states = states_history.reshape((-1, n_x))
+            surrogate_model.inputs = inputs_history.reshape((-1, n_u))
             surrogate_model.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
@@ -787,7 +758,7 @@ class DataManager(plotter):
         # main loop
         for _ in range(iter):
             # random input inside the input boundaries
-            u_ref = self.reshape(np.random.uniform(system.lbu, system.ubu), shape=(-1, 1))
+            u_ref = np.random.uniform(system.lbu, system.ubu).reshape((-1, 1))
 
             # simulation steps
             x0_real = real_simulator.make_step(u0=u_ref)
@@ -795,8 +766,8 @@ class DataManager(plotter):
             x0_surrogate = surrogate_model.make_step(u0=u_ref)
 
         # exporting logs
-        surrogate_model.export_log(file_name = 'Surrogate Model Log.csv')
-        cqr_model.export_log(file_name = 'CQR_NARX Model Log.csv')
+        #surrogate_model.export_log(file_name = 'Surrogate Model Log.csv')
+        #cqr_model.export_log(file_name = 'CQR_NARX Model Log.csv')
 
 
         # plots
@@ -806,33 +777,31 @@ class DataManager(plotter):
 
         # plot for each state
         for i in range(n_x):
-            # plot the real mean
-            # ax[i].plot(x_sorted, y_calib[i, :][sorted_indices], label=f'real mean')
+
+            # Shaded confidence interval (show legend for the first plot of each row)
+            fig.add_trace(go.Scatter(x=np.concatenate((cqr_model.history['time'].reshape(-1, ),
+                                                       cqr_model.history['time'].reshape(-1, )[::-1])),
+                                     y=np.concatenate((cqr_model.history['x0_cqr_high'][:, i],
+                                                       cqr_model.history['x0_cqr_low'][:, i][::-1])),
+                                     fill='toself', fillcolor='rgba(128, 128, 128, 0.5)',
+                                     line=dict(color='rgba(255,255,255,0)'),
+                                     name=f'Confidence {1 - cqr_model.alpha}',
+                                     showlegend=True if i == 0 else False),
+                          row=i + 1, col=1)
+
             fig.add_trace(go.Scatter(x=real_simulator.data['_time'].reshape(-1,), y=real_simulator.data['_x'][:, i],
                                      mode='lines', line=dict(color='red'),
                                      name='real simulation',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
 
-            fig.add_trace(go.Scatter(x=cqr_model.history['time'], y=cqr_model.history['x0_cqr'][i, :],
+            fig.add_trace(go.Scatter(x=cqr_model.history['time'].reshape(-1,), y=cqr_model.history['x0_cqr'][:, i],
                                      mode='lines', line=dict(color='green'),
                                      name='CQR Nominal',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
 
-            '''fig.add_trace(go.Scatter(x=cqr_model.history['time'], y=cqr_model.history['x0_cqr_high'][i, :],
-                                     mode='lines', line=dict(color='blue'),
-                                     name='CQR High',
-                                     showlegend=True if i == 0 else False),
-                          row=i + 1, col=1)
-
-            fig.add_trace(go.Scatter(x=cqr_model.history['time'], y=cqr_model.history['x0_cqr_low'][i, :],
-                                     mode='lines', line=dict(color='grey'),
-                                     name='CQR Low',
-                                     showlegend=True if i == 0 else False),
-                          row=i + 1, col=1)'''
-
-            fig.add_trace(go.Scatter(x=surrogate_model.history['time'], y=surrogate_model.history['x0'][i, :],
+            fig.add_trace(go.Scatter(x=surrogate_model.history['time'].reshape(-1,), y=surrogate_model.history['x0'][:, i],
                                      mode='lines', line=dict(color='yellow'),
                                      name='Surrogate',
                                      showlegend=True if i == 0 else False),

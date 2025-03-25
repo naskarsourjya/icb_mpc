@@ -59,73 +59,6 @@ class narx():
         return None
 
 
-    def reshape(self, array, shape):
-        """
-        Reshape the array to the desired shape.
-
-        Parameters
-        ----------
-        array : numpy.array
-            Array to be reshaped.
-        shape : tuple
-            Desired shape of the array.
-
-        Returns
-        -------
-        numpy.array
-            Reshaped array.
-        """
-
-        # rows and columns
-        rows, cols = shape
-
-        # end
-        return array.reshape(cols, rows).T
-
-
-    @property
-    def states(self):
-        return self._states
-
-
-    @states.setter
-    def states(self, val):
-        assert isinstance(val, np.ndarray), "states must be a numpy.array."
-
-        assert val.shape[1] == self.order, \
-            'Number of samples must be equal to the order of the NARX model!'
-
-        assert val.shape[0] == self.n_x, (
-            'Expected number of states is: {}, but found {}'.format(self.n_x, val.shape[0]))
-
-        # storage
-        self._states = val
-
-
-    @property
-    def inputs(self):
-        return self._inputs
-
-
-    @inputs.setter
-    def inputs(self, val):
-        if self.order > 1:
-            assert isinstance(val, np.ndarray), "inputs must be a numpy.array."
-
-            assert self.order - 1 == val.shape[1], \
-                'Number of samples for inputs should be (order-1) !'
-
-            assert val.shape[0] == self.n_u, (
-                'Expected number of inputs is: {}, but found {}'.format(self.n_u, val.shape[0]))
-
-            # storage
-            self._inputs = val
-
-        # error
-        else:
-            raise ValueError("Inputs cannot be set for system with order <= 1.")
-
-
     def setup_trainer(self, hidden_layers=[50, 50, 50], batch_size=320, learning_rate=0.01, epochs= 1000,
                      validation_split = 0.2, scheduler_flag = True, lr_threshold = 1e-8):
 
@@ -138,8 +71,6 @@ class narx():
         self.lr_threshold = lr_threshold
 
 
-
-
     def train(self, x_train, y_train):
         # init
         train_history = {'training_loss': [],
@@ -149,7 +80,7 @@ class narx():
 
         # scaling the input
         scaler = StandardScaler()
-        scaler.fit(x_train.T)
+        scaler.fit(x_train)
 
         # nn init
         narx_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
@@ -169,8 +100,8 @@ class narx():
         self._set_device(torch_device= narx_model.torch_device)
 
         # converting datasets to tensors
-        X_torch = torch.tensor(x_train.T, dtype=torch.float32)
-        Y_torch = torch.tensor(y_train.T, dtype=torch.float32)
+        X_torch = torch.tensor(x_train.to_numpy(), dtype=torch.float32)
+        Y_torch = torch.tensor(y_train.to_numpy(), dtype=torch.float32)
 
         # Create TensorDataset
         dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
@@ -231,6 +162,8 @@ class narx():
         self.model = narx_model
         self.scaler = scaler
         self.train_history = train_history
+        self.x_label = x_train.columns
+        self.y_label = y_train.columns
         # flag update
         self.flags.update({
             'narx_ready': True,
@@ -238,130 +171,6 @@ class narx():
 
         # end
         return None
-
-
-    def set_initial_guess(self):
-
-        assert self.flags['narx_ready'] == True, \
-            'NARX not trained! Train the NARX model.'
-
-        assert self.flags['cqr_ready'] == True, \
-            'QR not confromalised! Conformalise QR model.'
-
-        states = self.states
-        inputs = self.inputs
-
-        state_order = self.order
-        state_samples = states.shape[1]
-
-        # stacking states and inputs with order
-        order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
-
-        # if order is 2 or more, only then previous inputs are needed
-        if self.order > 1:
-            input_order = self.order - 1
-            input_samples = inputs.shape[1]
-
-            # stacking layer
-            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
-
-            # stacking states and inputs for narx model
-            initial_cond = np.vstack([order_states, order_inputs])
-
-        else:
-            initial_cond = order_states
-
-        # store cqr initial contition
-        self.initial_cond = initial_cond
-
-        # flag update
-        self.flags.update({
-            'initial_condition_ready': True
-        })
-
-        # end
-        return None
-
-
-    def make_step(self, u0):
-        assert self.flags['narx_ready'], "NARX not trained."
-
-        assert self.flags['initial_condition_ready'], "NARX not initialised"
-
-        assert u0.shape[0] == self.n_u, \
-            f"u0 should have have {self.n_u} rows but instead found {u0.shape[0]}!"
-
-        assert u0.shape[1] == 1, \
-            f"u0 should have have 1 columns but instead found {u0.shape[1]}!"
-
-        # init
-        x0 = self.initial_cond
-        n_x = self.n_x
-        n_u = self.n_u
-        order = self.order
-
-
-        # segregating states and inputs
-        states = x0[0:n_x*order, :]
-        inputs = x0[n_x*order:, :]
-
-        # stacking all data
-        X = np.vstack([states, u0, inputs])
-
-        # setting default device
-        self._set_device(torch_device=self.model.torch_device)
-
-        # scaling
-        #X_scaled = self.scaler.transform(X.T)
-
-        # loading tensor
-        X_torch = torch.tensor(X.T, dtype=torch.float32)
-
-        # making full model prediction
-        with torch.no_grad():
-            y_pred = self.model(X_torch).cpu().numpy().T
-
-        # reshaping from a column vector to row with states and column with different quantiles
-        x0 = self.reshape(y_pred, shape=(n_x, -1))
-
-        # pushing oldest state out of system and inserting the current state
-        new_states = np.vstack([states[n_x:(order) * n_x, :], x0])
-
-        # setting new initial conditions
-        if order>1:
-
-            # pushing oldest input out of system and inserting the current input
-            new_inputs = np.vstack([inputs[n_u:(order - 1) * n_u, :], u0])
-
-            # setting new initial guess by removing the last timestamp data
-            self.states=self.reshape(new_states, shape=(n_x, -1))
-            self.inputs=self.reshape(new_inputs, shape=(n_u, -1))
-            self.set_initial_guess()
-
-        else:
-            self.states = self.reshape(new_states, shape=(n_x, -1))
-            self.set_initial_guess()
-
-        # storing simulation history
-        if self.history==None:
-            history = {}
-            history['x0'] =x0
-            history['time'] = [0.0]
-            history['u0'] = u0
-
-            self.history = history
-
-        else:
-            history = self.history
-
-            history['x0'] = np.hstack([history['x0'], x0])
-            history['time'].append(history['time'][-1] + self.t_step)
-            history['u0'] = np.hstack([history['u0'], u0])
-
-            self.history = history
-
-        # return predictions
-        return x0
 
 
     def setup_plot(self, height_px=700, width_px=1800):

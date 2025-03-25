@@ -55,15 +55,6 @@ class cqr_narx():
         return None
 
 
-    def reshape(self, array, shape):
-
-        # rows and columns
-        rows, cols = shape
-
-        # end
-        return array.reshape(cols, rows).T
-
-
     @property
     def states(self):
         return self._cqrstates
@@ -73,10 +64,10 @@ class cqr_narx():
     def states(self, val):
         assert isinstance(val, np.ndarray), "states must be a numpy.array."
 
-        assert val.shape[1] == self.order, \
+        assert val.shape[0] == self.order, \
             'Number of samples must be equal to the order of the NARX model!'
 
-        assert val.shape[0] == self.n_x, (
+        assert val.shape[1] == self.n_x, (
             'Expected number of states is: {}, but found {}'.format(self.n_x, val.shape[0]))
 
         # storage
@@ -93,10 +84,10 @@ class cqr_narx():
         if self.order > 1:
             assert isinstance(val, np.ndarray), "inputs must be a numpy.array."
 
-            assert self.order - 1 == val.shape[1], \
+            assert self.order - 1 == val.shape[0], \
                 'Number of samples for inputs should be (order-1) !'
 
-            assert val.shape[0] == self.n_u, (
+            assert val.shape[1] == self.n_u, (
                 'Expected number of inputs is: {}, but found {}'.format(self.n_u, val.shape[0]))
 
             # storage
@@ -167,7 +158,7 @@ class cqr_narx():
 
         # scaling data
         scaler = StandardScaler()
-        scaler.fit(x_train.T)
+        scaler.fit(x_train)
 
         # creating a model for each quantile
         for quantile in quantiles:
@@ -194,8 +185,8 @@ class cqr_narx():
             self._set_device(torch_device=cqr_model_n.torch_device)
 
             # converting datasets to tensors
-            X_torch = torch.tensor(x_train.T, dtype=torch.float32)
-            Y_torch = torch.tensor(error_train.T, dtype=torch.float32)
+            X_torch = torch.tensor(x_train.to_numpy(), dtype=torch.float32)
+            Y_torch = torch.tensor(error_train.to_numpy(), dtype=torch.float32)
 
             # Create TensorDataset
             dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
@@ -286,154 +277,25 @@ class cqr_narx():
 
         return None
 
-    def train_all_qr_depreciate(self, x_train, y_train):
-
-        # init
-        models = []
-        train_history_list = []
-
-        # generating quantiles
-        low_quantile = self.alpha / 2
-        high_quantile = 1 - self.alpha / 2
-        quantiles = [high_quantile] + [low_quantile]
-        n_q = len(quantiles)
-
-        # setting training history
-        train_history = {'training_loss': [],
-                         'validation_loss': [],
-                         'learning_rate': [],
-                         'epochs': [],
-                         'quantile': []}
-
-        # scaling the input
-        scaler = MinMaxScaler()
-        scaler.fit(x_train.T)
-
-        # model init
-        cqr_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
-                              output_size=self.n_x * n_q,
-                              hidden_layers=self.hidden_layers, scaler=scaler, device=self.device)
-
-        # setting up optimiser for training
-        optimizer = torch.optim.AdamW(cqr_model.parameters(), lr=self.learning_rate)
-
-        # scheduler setup
-        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-
-        # setting computation device
-        self._set_device(torch_device=cqr_model.torch_device)
-
-        # converting datasets to tensors
-        X_torch = torch.tensor(x_train.T, dtype=torch.float32)
-
-        # stacking once per quantile
-        Y_stacked = np.vstack([y_train for _ in range(n_q)])
-
-        # converting to tensor
-        Y_torch = torch.tensor(Y_stacked.T, dtype=torch.float32)
-
-        # Create TensorDataset
-        dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
-
-        # splitting full datset
-        train_dataset, validation_dataset = (
-            torch.utils.data.random_split(dataset=dataset, lengths=[1 - self.validation_split, self.validation_split],
-                                          generator=torch.Generator(device=cqr_model.torch_device).manual_seed(
-                                              self.set_seed)))
-
-        # creating DataLoader with batch_size
-        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True,
-                                                       generator=torch.Generator(
-                                                           device=cqr_model.torch_device).manual_seed(
-                                                           self.set_seed))
-        validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=self.batch_size, shuffle=True,
-                                                            generator=torch.Generator(
-                                                                device=cqr_model.torch_device).manual_seed(
-                                                                self.set_seed))
-
-        # main training loop
-        for epoch in tqdm(range(self.epochs), desc=f'Training All CQR'):
-
-            # cqr training
-            train_loss = 0
-            for batch_X, batch_Y in train_dataloader:
-                # Forward pass
-                Y_hat = cqr_model(batch_X).squeeze()
-                loss = 0
-                for quantile in quantiles:
-                    loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile)
-
-                # Backward pass / parameters update
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                # storing loss
-                train_loss += loss.item()
-
-            # narx validation
-            val_loss = 0
-            for batch_X, batch_Y in validation_dataloader:
-                with torch.no_grad():
-                    Y_hat = cqr_model(batch_X).squeeze()
-                    for quantile in quantiles:
-                        val_loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile).item()
-
-            # storing data
-            train_history['training_loss'].append(train_loss)
-            train_history['validation_loss'].append(val_loss)
-            train_history['epochs'].append(epoch)
-            train_history['learning_rate'].append(optimizer.param_groups[0]["lr"])
-
-            # learning rate update
-            if self.scheduler_flag:
-                lr_scheduler.step(val_loss)
-
-                # break if training min learning rate is reached
-                if optimizer.param_groups[0]["lr"] <= self.lr_threshold:
-                    break
-
-        # storage
-        train_history_list.append(train_history)
-
-        # inserting the mean prediction model
-        full_model_list = [self.narx['model']] + [cqr_model]
-        full_model = MergedModel(models=full_model_list, device=self.device)
-
-        # store model
-        self.cqr_model = cqr_model
-        self.scaler = scaler
-        self.full_model = full_model
-        self.train_history_list = train_history_list
-        self.quantiles = quantiles
-        self.low_quantile = low_quantile
-        self.high_quantile = high_quantile
-        self.type = 'all'
-
-        # flag update
-        self.flags.update({
-            'qr_ready': True,
-        })
-
-        # end
-        return None
-
 
     def surrogate_error(self, narx_input, narx_output):
+
+
 
         # setting default device
         self._set_device(torch_device=self.narx.torch_device)
 
         # preprosecssing
-        X_torch = torch.tensor(narx_input.T, dtype=torch.float32)
+        X_torch = torch.tensor(narx_input.to_numpy(), dtype=torch.float32)
 
         # making full model prediction
         with torch.no_grad():
-            narx_pred = self.narx(X_torch).cpu().numpy().T
+            narx_pred = self.narx(X_torch).cpu().numpy()
 
         narx_error = narx_output-narx_pred
 
         return narx_error
+
 
     def conform_qr(self, x_calib, y_calib):
         assert self.flags['qr_ready'] == True, \
@@ -448,29 +310,29 @@ class cqr_narx():
         low_quantile = self.low_quantile
         high_quantile = self.high_quantile
         alpha = self.alpha
-        n_samples = error_calib.shape[1]
+        n_samples = error_calib.shape[0]
 
         # scaling calibration data
         #x_calib_sc = self.scaler.transform(x_calib.T)
 
         # making quantile prediction
-        Xi_troch = torch.tensor(x_calib.T, dtype=torch.float32)
+        Xi_troch = torch.tensor(x_calib.to_numpy(), dtype=torch.float32)
         with torch.no_grad():
-            qr_all = self.cqr_model(Xi_troch).cpu().numpy().T
+            qr_all = self.cqr_model(Xi_troch).cpu().numpy()
 
         index_high = quantiles.index(high_quantile)
         index_low = quantiles.index(low_quantile)
 
         # storing the values
-        q_lo = qr_all[n_x * index_low: n_x + n_x * index_low, :]
-        q_hi = qr_all[n_x * index_high: n_x + n_x * index_high, :]
+        q_lo = qr_all[:, n_x * index_low: n_x + n_x * index_low]
+        q_hi = qr_all[:, n_x * index_high: n_x + n_x * index_high]
 
         for j in range(n_x):
 
             # conformalising one state at a time
-            q_lo_xn = q_lo[j,:]
-            q_hi_xn = q_hi[j, :]
-            Yi_xn = error_calib[j,:]
+            q_lo_xn = q_lo[:, j]
+            q_hi_xn = q_hi[:, j]
+            Yi_xn = error_calib.to_numpy()[:, j]
 
             # Generating conformity scores
             Ei_xn = np.max(np.vstack([q_lo_xn - Yi_xn, Yi_xn - q_hi_xn]), axis = 0)
@@ -485,7 +347,7 @@ class cqr_narx():
             if j == 0:
                     Q1_alpha = Q_xn
             else:
-                Q1_alpha = np.vstack([Q1_alpha, Q_xn])
+                Q1_alpha = np.hstack([Q1_alpha, Q_xn])
 
         # storage
         self.Q1_alpha = torch.tensor(Q1_alpha, dtype=torch.float32)
@@ -502,7 +364,7 @@ class cqr_narx():
         return None
 
 
-    def set_initial_guess(self):
+    def _set_initial_guess(self):
 
         assert self.flags['qr_ready'] == True, \
             'CQR not trained! Train CQR model!'
@@ -510,31 +372,17 @@ class cqr_narx():
         assert self.flags['cqr_ready'] == True, \
             'QR not confromalised! Conformalise QR model.'
 
+        # init
         states = self.states
         inputs = self.inputs
 
-        state_order = self.order
-        state_samples = states.shape[1]
+        # reshaping
+        init_states = states.reshape((1, -1))
+        init_inputs = inputs.reshape((1, -1))
 
-        # stacking states and inputs with order
-        order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
-
-        # if order is 2 or more, only then previous inputs are needed
-        if self.order > 1:
-            input_order = self.order - 1
-            input_samples = inputs.shape[1]
-
-            # stacking layer
-            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
-
-            # stacking states and inputs for narx model
-            initial_cond = np.vstack([order_states, order_inputs])
-
-        else:
-            initial_cond = order_states
-
-        # store cqr initial contition
-        self.initial_cond = initial_cond
+        # storage
+        self.init_states = init_states
+        self.init_inputs = init_inputs
 
         # flag update
         self.flags.update({
@@ -543,6 +391,19 @@ class cqr_narx():
 
         # end
         return None
+
+
+    def set_initial_guess(self):
+
+        # setting up the states and the inputs
+        self._set_initial_guess()
+
+        # init time
+        self.t0 = 0.0
+
+        # end
+        return None
+
 
 
     def make_step(self, u0):
@@ -555,18 +416,12 @@ class cqr_narx():
             f"u0 should have have 1 columns but instead found {u0.shape[1]}!"
 
         # init
-        initial_cond = self.initial_cond
         n_x = self.n_x
         n_u = self.n_u
         order = self.order
 
-
-        # segregating states and inputs
-        states = initial_cond[0:n_x*order, :]
-        inputs = initial_cond[n_x*order:, :]
-
         # stacking all data
-        X = np.vstack([states, u0, inputs])
+        X = np.hstack([self.init_states, u0, self.init_inputs])
 
         # scaling
         #X_scaled = self.scaler.transform(X.T)
@@ -575,39 +430,41 @@ class cqr_narx():
         self._set_device(torch_device=self.full_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_torch = torch.tensor(X.T, dtype=torch.float32)
+        X_torch = torch.tensor(X, dtype=torch.float32)
 
         # making full model prediction
         with torch.no_grad():
-            y_pred = self.full_model(X_torch).T
+            y_pred = self.full_model(X_torch)
 
         # doing postprocessing containing the conformalisation step
         x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
 
         # pushing oldest state out of system and inserting the current state
-        new_states = np.vstack([states[n_x:(order)*n_x, :], x0])
+        new_states = np.vstack([x0, self.states[:order-1, :]])
 
         if order>1:
 
             # pushing oldest input out of system and inserting the current input
-            new_inputs = np.vstack([inputs[n_u:(order-1)*n_u, :], u0])
+            new_inputs = np.vstack([u0, self. inputs[:order-2, :]])
 
             # setting new initial guess by removing the last timestamp data
-            self.states=self.reshape(new_states, shape=(n_x, -1))
-            self.inputs=self.reshape(new_inputs, shape=(n_u, -1))
-            self.set_initial_guess()
+            self.states = new_states
+            self.inputs = new_inputs
+            self._set_initial_guess()
 
         else:
-            self.states = self.reshape(new_states, shape=(n_x, -1))
-            self.set_initial_guess()
+            self.states = new_states
+            self._set_initial_guess()
 
         # storing simulation history
+
+
         if self.history==None:
             history = {}
             history['x0_cqr'] =x0
             history['x0_cqr_high'] = x0_cqr_high
             history['x0_cqr_low'] = x0_cqr_low
-            history['time'] = [0.0]
+            history['time'] = np.array([[self.t0]])
             history['u0'] = u0
 
             self.history = history
@@ -615,11 +472,11 @@ class cqr_narx():
         else:
             history = self.history
 
-            history['x0_cqr'] = np.hstack([history['x0_cqr'], x0])
-            history['x0_cqr_high'] = np.hstack([history['x0_cqr_high'], x0_cqr_high])
-            history['x0_cqr_low'] = np.hstack([history['x0_cqr_low'], x0_cqr_low])
-            history['time'].append(history['time'][-1] + self.t_step)
-            history['u0'] = np.hstack([history['u0'], u0])
+            history['x0_cqr'] = np.vstack([history['x0_cqr'], x0])
+            history['x0_cqr_high'] = np.vstack([history['x0_cqr_high'], x0_cqr_high])
+            history['x0_cqr_low'] = np.vstack([history['x0_cqr_low'], x0_cqr_low])
+            history['time'] = np.vstack([history['time'], self.t0])
+            history['u0'] = np.vstack([history['u0'], u0])
 
             self.history = history
 
@@ -629,14 +486,17 @@ class cqr_narx():
             if self.log == None:
                 log = {}
                 log['X'] = X
-                log['time'] = [0.0]
+                log['time'] = np.array([[self.t0]])
                 self.log = log
 
             else:
                 log = self.log
-                log['X'] = np.hstack([log['X'], X])
-                log['time'].append(log['time'][-1] + self.t_step)
+                log['X'] = np.vstack([log['X'], X])
+                log['time'] = np.vstack([log['time'], self.t0])
                 self.log = log
+
+        # stepping up time
+        self.t0 = self.t0 + self.t_step
 
         # return predictions
         return x0, x0_cqr_high, x0_cqr_low
@@ -651,17 +511,17 @@ class cqr_narx():
         input_names = []
         for o in range(self.order):
             for n_xn in range(self.n_x):
-                state_name = f'state_{n_xn+1}_lag_{self.order-1-o}'
+                state_name = f'state_{n_xn+1}_lag_{o+1}'
                 state_names.append(state_name)
 
             for n_un in range(self.n_u):
-                input_name = f'input_{n_un+1}_lag_{self.order-1-o}'
+                input_name = f'input_{n_un+1}_lag_{o}'
                 input_names.append(input_name)
 
         # dataset
         col_names = ['time'] + state_names + input_names
         data = np.hstack([np.vstack(self.log['time']),
-                          self.log['X'].T])
+                          self.log['X']])
 
         # Converting to dataframe
         df = pd.DataFrame(data, columns=col_names)
@@ -711,27 +571,27 @@ class cqr_narx():
         # init
         n_x = self.n_x
         Q1_alpha = self.Q1_alpha
-        n_samples = y.shape[1]
+        n_samples = y.shape[0]
 
         # stacking states
-        states = y[0:n_x,:]
-        stacked_states = torch.vstack([states] * 3)
+        states = y[:, 0:n_x]
+        stacked_states = torch.hstack([states] * 3)
 
         # stacking errors
-        errors = y[n_x:, :]
-        stacked_errors = torch.vstack([torch.zeros((n_x, n_samples)), errors])
+        errors = y[:, n_x:]
+        stacked_errors = torch.hstack([torch.zeros((n_samples, n_x)), errors])
 
         # stacking conformalisation
-        conform = torch.hstack([Q1_alpha] * n_samples)
-        stacked_confrom = torch.vstack([torch.zeros((n_x, n_samples)), conform, -conform])
+        conform = torch.vstack([Q1_alpha] * n_samples)
+        stacked_confrom = torch.hstack([torch.zeros((n_samples, n_x)), conform, -conform])
 
         # final prediction
         pred = stacked_states + stacked_errors + stacked_confrom
 
         # extracting the quantiles
-        x0 = pred[0:n_x, :]
-        x0_cqr_high = pred[n_x:2 * n_x, :]
-        x0_cqr_low = pred[2 * n_x:, :]
+        x0 = pred[:, 0:n_x]
+        x0_cqr_high = pred[:, n_x:2 * n_x]
+        x0_cqr_low = pred[:, 2 * n_x:]
 
         # end
         return x0.cpu().numpy(), x0_cqr_high.cpu().numpy(), x0_cqr_low.cpu().numpy()
@@ -859,7 +719,7 @@ class cqr_narx():
         self._set_device(torch_device=self.cqr_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_narx = torch.tensor(x_test.T, dtype=torch.float32)
+        X_narx = torch.tensor(x_test.to_numpy(), dtype=torch.float32)
 
         # making prediction
         with torch.no_grad():
@@ -880,13 +740,15 @@ class cqr_narx():
 
         # plot for each state
         for i in range(n_x):
+            col_name = f'state_{i+1}_lag_0'
             # plot the real mean
             #ax[i].plot(x_sorted, y_calib[i, :][sorted_indices], label=f'real mean')
-            fig.add_trace(go.Scatter(x=x_sorted, y=y_test[i, :][sorted_indices],
+            fig.add_trace(go.Scatter(x=x_sorted, y=y_test[col_name][sorted_indices],
                                      mode='lines', line=dict(color='red'),
                                      name='real mean',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
+
             fig.update_yaxes(title_text=f' State {i+1}', row=i + 1, col=1)
             fig.update_xaxes(title_text='Times Stamp [s]', row=i + 1, col=1)
 
@@ -936,34 +798,21 @@ class cqr_narx():
         n_samples = x_test.shape[1]
         alpha = self.alpha
 
-        # Calculating model intervals
-        for i in tqdm(range(n_samples), desc='Calculating surrogate model state intervals'):
-            states_history = x_test[0:n_x * order, i]
-            inputs_n = x_test[n_x * order:, i]
-            u0 = inputs_n[0:n_u]
-            inputs_history = inputs_n[n_u:]
+        # setting default device
+        self._set_device(torch_device=self.full_model.torch_device)
 
-            if order > 1:
-                self.states=self.reshape(states_history, shape=(n_x, -1))
-                self.inputs=self.reshape(inputs_history, shape=(n_u, -1))
-                self.set_initial_guess()
-                x0, x0_cqr_high, x0_cqr_low = self.make_step(u0=self.reshape(u0, shape=(n_u, 1)))
-            else:
-                self.states=self.reshape(states_history, shape=(n_x, -1))
-                self.set_initial_guess()
-                x0, x0_cqr_high, x0_cqr_low = self.make_step(u0=self.reshape(u0, shape=(n_u, 1)))
+        # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
+        X_torch = torch.tensor(x_test.to_numpy(), dtype=torch.float32)
 
-            if i == 0:
-                Y_predicted_mean = x0
-                Y_predicted_high = x0_cqr_high
-                Y_predicted_low = x0_cqr_low
-            else:
-                Y_predicted_mean = np.hstack([Y_predicted_mean, x0])
-                Y_predicted_high = np.hstack([Y_predicted_high, x0_cqr_high])
-                Y_predicted_low = np.hstack([Y_predicted_low, x0_cqr_low])
+        # making full model prediction
+        with torch.no_grad():
+            y_pred = self.full_model(X_torch)
+
+        # doing postprocessing containing the conformalisation step
+        x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
 
         # Sorting according to timestamps
-        x = t_test.reshape(-1, )
+        x = t_test
         sorted_indices = np.argsort(x)
         x_sorted = x[sorted_indices]
 
@@ -987,8 +836,8 @@ class cqr_narx():
 
             # Shaded confidence interval (show legend for the first plot of each row)
             fig.add_trace(go.Scatter(x=np.concatenate((x_sorted, x_sorted[::-1])),
-                                     y=np.concatenate((Y_predicted_high[i, sorted_indices],
-                                                       Y_predicted_low[i, sorted_indices][::-1])),
+                                     y=np.concatenate((x0_cqr_high[sorted_indices, i],
+                                                       x0_cqr_low[sorted_indices, i][::-1])),
                                      fill='toself', fillcolor='rgba(128, 128, 128, 0.5)',
                                      line=dict(color='rgba(255,255,255,0)'),
                                      name=f'Confidence {1 - alpha}',
@@ -1006,28 +855,28 @@ class cqr_narx():
                           row=i + 1, col=1)
 
             # Predicted mean line (show legend for the first plot of each row)
-            fig.add_trace(go.Scatter(x=x_sorted, y=Y_predicted_mean[i, sorted_indices],
+            fig.add_trace(go.Scatter(x=x_sorted, y=x0[sorted_indices, i],
                                      mode='lines', name=f'Predicted Mean',
                                      line=dict(color='blue', dash='longdashdot'),
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
 
             # Real mean line (show legend for the first plot of each row)
-            fig.add_trace(go.Scatter(x=x_sorted, y=y_test[i, sorted_indices],
+            fig.add_trace(go.Scatter(x=x_sorted, y=y_test.to_numpy()[sorted_indices, i],
                                      mode='lines', name=f'Real Mean',
                                      line=dict(color='orange'),
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
 
             # CQR High quantile (show legend for the first plot of each row)
-            fig.add_trace(go.Scatter(x=x_sorted, y=Y_predicted_high[i, sorted_indices],
+            fig.add_trace(go.Scatter(x=x_sorted, y=x0_cqr_high[sorted_indices, i],
                                      mode='markers', name=f'High Quantile={high_quantile}',
                                      marker=dict(color='green', size=6),
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
 
             # CQR Low quantile (show legend for the first plot of each row)
-            fig.add_trace(go.Scatter(x=x_sorted, y=Y_predicted_low[i, sorted_indices],
+            fig.add_trace(go.Scatter(x=x_sorted, y=x0_cqr_low[sorted_indices, i],
                                      mode='markers', name=f'Low Quantile={low_quantile}',
                                      marker=dict(color='purple', size=6),
                                      showlegend=True if i == 0 else False),

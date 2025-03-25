@@ -10,16 +10,16 @@ dm = DataManager(set_seed = 0)
 #su.random_state_sampler(system = spring_system, n_samples=50)
 dm.random_input_sampler(system = spring_system, n_samples=100)
 dm.data_splitter(order=3)
-#su.visualize2d_data()
+#dm.visualize2d_data()
 #ann.store_raw_data(filename='data\spring_random_1000.pkl')
 
 # pipeline to load and visualize data
 #ann.load_raw_data(filename='data\\spring_random_1000.pkl')
-#ann.visualize()
+#dm.visualize_data()
 
 #su.narx_trainer(hidden_layers=[10], batch_size=320,
 #          learning_rate=0.1, epochs= 100)
-dm.narx_trainer(hidden_layers=[1], batch_size=1000,
+dm.narx_trainer(hidden_layers=[10], batch_size=1000,
           learning_rate=0.1, epochs= 1000, scheduler_flag=True, device=default_device)
 #su.plot_narx_training_history()
 #ann.save_narx(filename='data\\narx10_10_s1000_o1.pkl')
@@ -42,8 +42,8 @@ dm.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=1000,
              lr_threshold=1e-7, epochs=1000, scheduler_flag=True, device=default_device)
 #su.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320)
 #su.cqr.plot_qr_training_history_plotly()
-#su.cqr_plot_qr_error()
-#dm.plot_cqr_error_plotly()
+#dm.cqr_plot_qr_error()
+dm.plot_cqr_error_plotly()
 #su.cqr_set_initial_guess(states=np.array([[0.1, 0.2, 0.3],
 #                               [0.4, 0.5, 0.6]]),
 #              inputs=np.array([[0.7, 0.8]]))
