@@ -9,7 +9,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from ._neuralnetwork import Regressor, MergedModel
 
 class cqr_narx():
-    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=None, debug=True):
+    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=None, debug=True, dtype=torch.float64):
         if set_seed is not None:
             np.random.seed(set_seed)
 
@@ -29,6 +29,7 @@ class cqr_narx():
         self.history = None
         self.log = None
         self.data = {}
+        self.dtype = dtype
 
         # setting up default trainer settings
         self.setup_trainer()
@@ -50,7 +51,11 @@ class cqr_narx():
 
     def _set_device(self, torch_device):
 
+        # set default device
         torch.set_default_device(torch_device)
+
+        # set default dtype
+        torch.set_default_dtype(self.dtype)
 
         return None
 
@@ -185,8 +190,8 @@ class cqr_narx():
             self._set_device(torch_device=cqr_model_n.torch_device)
 
             # converting datasets to tensors
-            X_torch = torch.tensor(x_train.to_numpy(), dtype=torch.float32)
-            Y_torch = torch.tensor(error_train.to_numpy(), dtype=torch.float32)
+            X_torch = torch.tensor(x_train.to_numpy(), dtype=self.dtype)
+            Y_torch = torch.tensor(error_train.to_numpy(), dtype=self.dtype)
 
             # Create TensorDataset
             dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
@@ -286,7 +291,7 @@ class cqr_narx():
         self._set_device(torch_device=self.narx.torch_device)
 
         # preprosecssing
-        X_torch = torch.tensor(narx_input.to_numpy(), dtype=torch.float32)
+        X_torch = torch.tensor(narx_input.to_numpy(), dtype=self.dtype)
 
         # making full model prediction
         with torch.no_grad():
@@ -316,7 +321,7 @@ class cqr_narx():
         #x_calib_sc = self.scaler.transform(x_calib.T)
 
         # making quantile prediction
-        Xi_troch = torch.tensor(x_calib.to_numpy(), dtype=torch.float32)
+        Xi_troch = torch.tensor(x_calib.to_numpy(), dtype=self.dtype)
         with torch.no_grad():
             qr_all = self.cqr_model(Xi_troch).cpu().numpy()
 
@@ -350,7 +355,7 @@ class cqr_narx():
                 Q1_alpha = np.hstack([Q1_alpha, Q_xn])
 
         # storage
-        self.Q1_alpha = torch.tensor(Q1_alpha, dtype=torch.float32)
+        self.Q1_alpha = torch.tensor(Q1_alpha, dtype=self.dtype)
         self.data['cqr_calibration_inputs'] = x_calib
         self.data['cqr_calibration_outputs'] = y_calib
         self.data['cqr_calibration_errors'] = error_calib
@@ -378,11 +383,14 @@ class cqr_narx():
 
         # reshaping
         init_states = states.reshape((1, -1))
-        init_inputs = inputs.reshape((1, -1))
 
         # storage
         self.init_states = init_states
-        self.init_inputs = init_inputs
+        self.init_inputs = None
+
+        if self.order>1:
+            init_inputs = inputs.reshape((1, -1))
+            self.init_inputs = init_inputs
 
         # flag update
         self.flags.update({
@@ -421,7 +429,10 @@ class cqr_narx():
         order = self.order
 
         # stacking all data
-        X = np.hstack([self.init_states, u0, self.init_inputs])
+        if self.order>1:
+            X = np.hstack([self.init_states, u0, self.init_inputs])
+        else:
+            X = np.hstack([self.init_states, u0])
 
         # scaling
         #X_scaled = self.scaler.transform(X.T)
@@ -430,7 +441,7 @@ class cqr_narx():
         self._set_device(torch_device=self.full_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_torch = torch.tensor(X, dtype=torch.float32)
+        X_torch = torch.tensor(X, dtype=self.dtype)
 
         # making full model prediction
         with torch.no_grad():
@@ -719,7 +730,7 @@ class cqr_narx():
         self._set_device(torch_device=self.cqr_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_narx = torch.tensor(x_test.to_numpy(), dtype=torch.float32)
+        X_narx = torch.tensor(x_test.to_numpy(), dtype=self.dtype)
 
         # making prediction
         with torch.no_grad():
@@ -802,7 +813,7 @@ class cqr_narx():
         self._set_device(torch_device=self.full_model.torch_device)
 
         # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-        X_torch = torch.tensor(x_test.to_numpy(), dtype=torch.float32)
+        X_torch = torch.tensor(x_test.to_numpy(), dtype=self.dtype)
 
         # making full model prediction
         with torch.no_grad():
@@ -930,7 +941,7 @@ class cqr_narx():
             self._set_device(torch_device=self.full_model.torch_device)
 
             # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-            X_torch = torch.tensor(X.T, dtype=torch.float32)
+            X_torch = torch.tensor(X.T, dtype=self.dtype)
 
             # making full model prediction
             with torch.no_grad():

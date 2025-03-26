@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from torch.onnx.symbolic_opset9 import tensor
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -10,7 +11,7 @@ from ._neuralnetwork import Regressor
 
 
 class narx():
-    def __init__(self, n_x, n_u, order, t_step, set_seed = None, device = 'auto'):
+    def __init__(self, n_x, n_u, order, t_step, set_seed = None, device = 'auto', dtype = torch.float64):
 
         if set_seed is not None:
             np.random.seed(set_seed)
@@ -24,6 +25,7 @@ class narx():
         self._inputs = None
         self._states = None
         self.history = None
+        self.dtype = dtype
 
         # default trainer settings
         self.setup_trainer()
@@ -71,6 +73,7 @@ class narx():
         self.lr_threshold = lr_threshold
 
 
+
     def train(self, x_train, y_train):
         # init
         train_history = {'training_loss': [],
@@ -100,8 +103,8 @@ class narx():
         self._set_device(torch_device= narx_model.torch_device)
 
         # converting datasets to tensors
-        X_torch = torch.tensor(x_train.to_numpy(), dtype=torch.float32)
-        Y_torch = torch.tensor(y_train.to_numpy(), dtype=torch.float32)
+        X_torch = torch.tensor(x_train.to_numpy(), dtype=self.dtype)
+        Y_torch = torch.tensor(y_train.to_numpy(), dtype=self.dtype)
 
         # Create TensorDataset
         dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)

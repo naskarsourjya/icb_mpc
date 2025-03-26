@@ -749,10 +749,10 @@ class DataManager(plotter):
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_model.states = self.reshape(states_history, shape=(n_x, -1))
+            cqr_model.states = states_history.reshape((-1, n_x))
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = self.reshape(states_history, shape=(n_x, -1))
+            surrogate_model.states = states_history.reshape((-1, n_x))
             surrogate_model.set_initial_guess()
 
         # main loop
@@ -809,7 +809,7 @@ class DataManager(plotter):
 
 
             fig.update_yaxes(title_text=f' State {i + 1}', row=i + 1, col=1)
-            fig.update_xaxes(title_text='Times Stamp [s]', row=i + 1, col=1)
+            fig.update_xaxes(title_text='Times [s]', row=i + 1, col=1)
 
 
 

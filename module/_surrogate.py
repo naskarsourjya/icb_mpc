@@ -28,98 +28,14 @@ class Surrogate():
 
         pass
 
-    def narx_2_dompc_model_deprecated(self, narx):
-
-        # init
-        model = do_mpc.model.Model(model_type='discrete', symvar_type='SX')
-        layer_counter = 0
-
-        # variable setup
-        system_state = model.set_variable(var_type='_x', var_name='system_state',
-                                          shape=(self.order * self.n_x + (self.order - 1) * self.n_u, 1))
-        system_input = model.set_variable(var_type='_u', var_name='system_input',
-                                          shape=(self.n_u, 1))
-
-        # used by random state tracking algo
-        state_ref = model.set_variable(var_type='_tvp', var_name='state_ref', shape=(self.n_x, 1))
-
-        # building input layer of narx
-        states_history = system_state[0:self.order * self.n_x]
-        inputs_histroy = system_state[self.order * self.n_x:]
-
-        # narx input layer
-        input_layer = ca.vertcat(states_history, system_input, inputs_histroy)
-
-        # scaled input layer
-        input_layer_scaled = self.scale_input_layer(input_layer, narx.scaler)
-
-        # reading the layers and the biases
-        for layer in narx.model.network:
-
-            # linear transformations
-            if isinstance(layer, torch.nn.Linear):
-                # extracting weight and bias
-                weight = layer.weight.cpu().detach().numpy()
-                bias = layer.bias.cpu().detach().numpy()
-
-                if layer_counter == 0:
-                    output_layer = ca.mtimes(weight, input_layer_scaled) + bias
-
-                else:
-                    output_layer = ca.mtimes(weight, output_layer) + bias
-
-                layer_counter += 1
-
-            elif isinstance(layer, torch.nn.Tanh):
-                output_layer = ca.tanh(output_layer)
-
-            else:
-                raise RuntimeError('{} not supported!'.format(layer))
-
-        # merging the model equations and the history shifting for the rhs
-        for i in range((2*self.order) - 1):
-
-            # model euqtions
-            if i == 0:
-                rhs = output_layer
-
-            # state history shifting
-            elif i < self.order:
-                start = (i-1)*self.n_x
-                end = (i)*self.n_x
-                rhs = ca.vertcat(rhs, system_state[start:end])
-
-            # previous input
-            elif i == self.order:
-                rhs = ca.vertcat(rhs, system_input)
-
-            # input history shifting
-            else:
-                start = self.order*self.n_x + (i -1 - self.order)*self.n_u
-                end = self.order*self.n_x + (i - self.order)*self.n_u
-                rhs = ca.vertcat(rhs, system_state[start:end])
-
-        # setting rhs
-        model.set_rhs('system_state', rhs)
-        model.setup()
-
-        # storage
-        self.model = model
-
-        # flag update
-        self.flags.update({
-            'model_ready': True,
-        })
-
-        # end
-        return model
+    def casadi_tanh_pytorch(self, x):
+        return (ca.exp(x) - ca.exp(-x)) / (ca.exp(x) + ca.exp(-x))
 
 
     def narx_2_dompc_model(self, narx, verbose = True):
 
         # init
         model = do_mpc.model.Model(model_type='discrete', symvar_type='SX')
-        layer_counter = 0
 
         # variable setup
         d_states = {}
@@ -149,7 +65,7 @@ class Surrogate():
         input_layer_scaled = self.scale_input_layer(input_layer, narx.scaler)
 
         # reading the layers and the biases
-        for layer in narx.model.network:
+        for i, layer in enumerate(narx.model.network):
 
             # linear transformations
             if isinstance(layer, torch.nn.Linear):
@@ -157,16 +73,20 @@ class Surrogate():
                 weight = layer.weight.cpu().detach().numpy()
                 bias = layer.bias.cpu().detach().numpy()
 
-                if layer_counter == 0:
+                if i == 0:
                     output_layer = ca.mtimes(weight, input_layer_scaled) + bias
 
                 else:
                     output_layer = ca.mtimes(weight, output_layer) + bias
 
-                layer_counter += 1
-
             elif isinstance(layer, torch.nn.Tanh):
-                output_layer = ca.tanh(output_layer)
+                if i == 0:
+                    #output_layer = ca.tanh(input_layer_scaled)
+                    output_layer = self.casadi_tanh_pytorch(input_layer_scaled)
+
+                else:
+                    #output_layer = ca.tanh(output_layer)
+                    output_layer = self.casadi_tanh_pytorch(output_layer)
 
             else:
                 raise RuntimeError('{} not supported!'.format(layer))
@@ -362,10 +282,11 @@ class Surrogate():
             "do_mpc.simulator not generated! Use create_simulator() to generate a simulator."
 
         states = self.states
-        inputs = self.inputs
+
 
         # if order is 2 or more, only then previous inputs are needed
         if self.order > 1:
+            inputs = self.inputs
             init_states = states.reshape((-1, 1))
             init_inputs = inputs.reshape((-1, 1))
             initial_cond = np.vstack([init_states, init_inputs])

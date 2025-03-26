@@ -4,11 +4,12 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
 class Regressor(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, scaler=None, device='auto'):
+    def __init__(self, input_size, output_size, hidden_layers, scaler=None, device='auto', dtype = torch.float64):
         super(Regressor, self).__init__()
 
         # Set device
-        self._set_device(device=device)
+        self._set_device(device=device, dtype=dtype)
+        self.dtype = dtype
 
         # Build the neural network dynamically based on the number of layers
         layers = []
@@ -42,10 +43,10 @@ class Regressor(nn.Module):
         if isinstance(scaler, MinMaxScaler):
 
             # Extract scaler info and move tensors to the correct device
-            X_min = torch.tensor(scaler.data_min_, dtype=torch.float32).to(self.torch_device)  # Minimum values
-            X_max = torch.tensor(scaler.data_max_, dtype=torch.float32).to(self.torch_device)  # Maximum values
-            X_scale = torch.tensor(scaler.scale_, dtype=torch.float32).to(self.torch_device)  # Scaling factor
-            X_min_target = torch.tensor(scaler.min_, dtype=torch.float32).to(self.torch_device)  # Shift factor
+            X_min = torch.tensor(scaler.data_min_, dtype=self.dtype).to(self.torch_device)  # Minimum values
+            X_max = torch.tensor(scaler.data_max_, dtype=self.dtype).to(self.torch_device)  # Maximum values
+            X_scale = torch.tensor(scaler.scale_, dtype=self.dtype).to(self.torch_device)  # Scaling factor
+            X_min_target = torch.tensor(scaler.min_, dtype=self.dtype).to(self.torch_device)  # Shift factor
 
             # Store scaler info
             self.scaler = {
@@ -59,8 +60,8 @@ class Regressor(nn.Module):
         elif isinstance(scaler, StandardScaler):
 
             # Extract scaler info and move tensors to the correct device
-            mean = torch.tensor(scaler.mean_, dtype=torch.float32).to(self.torch_device)  # Mean values
-            std = torch.tensor(scaler.scale_, dtype=torch.float32).to(self.torch_device)  # Standard deviations
+            mean = torch.tensor(scaler.mean_, dtype=self.dtype).to(self.torch_device)  # Mean values
+            std = torch.tensor(scaler.scale_, dtype=self.dtype).to(self.torch_device)  # Standard deviations
 
             # Store scaler info
             self.scaler = {
@@ -102,7 +103,7 @@ class Regressor(nn.Module):
         """Count the total number of weights and biases in the network."""
         return sum(p.numel() for p in self.network.parameters())
 
-    def _set_device(self, device):
+    def _set_device(self, device, dtype):
         # Auto choose GPU if available
         if device == 'auto':
             if torch.cuda.is_available():
@@ -115,9 +116,12 @@ class Regressor(nn.Module):
         # Set device
         self.torch_device = torch.device(device)
 
+        # set default data type
+        torch.set_default_dtype(dtype)
+
 
 class MergedModel(nn.Module):
-    def __init__(self, models, device='auto'):
+    def __init__(self, models, device='auto', dtype=torch.float64):
         """
         Initializes the MergedModel with a list of models.
 
@@ -127,7 +131,7 @@ class MergedModel(nn.Module):
         super(MergedModel, self).__init__()
 
         # set device
-        self._set_device(device=device)
+        self._set_device(device=device, dtype=dtype)
 
         # storage
         self.model_list = models
@@ -157,7 +161,7 @@ class MergedModel(nn.Module):
         return torch.cat(outputs, dim=1)
 
 
-    def _set_device(self, device):
+    def _set_device(self, device, dtype):
         # auto choose gpu if gpu is available
         if device == 'auto':
 
@@ -176,6 +180,9 @@ class MergedModel(nn.Module):
         # torch default device is set
         self.torch_device = torch.device(device)
         torch.set_default_device(self.torch_device)
+
+        # set default data type
+        torch.set_default_dtype(dtype)
 
         # end
         return None

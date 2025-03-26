@@ -102,9 +102,15 @@ Scale data (standard scaling or min max scaling) before training.
 
 add mps support
 
-## todo
-
 rewrite calculate surrogate error to calculate errors in matrix instead of make_step
+
+# Week 11 (31/03/2025)
+
+There is translation problem when the pytorch model is converted to do_mpc model. SInce do_mpc is based on casadi which only supports float64, and we are using multiple datatypes in the pytorch, we are getting issues whrn the nn has large nodes or it is very deep.
+
+
+
+## todo
 
 Increase the f_ext cost term to 10^3 and then maybe try to reduce if mpc does nothing.
 
