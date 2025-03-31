@@ -1,3 +1,5 @@
+import copy
+import dill
 import numpy as np
 import plotly.graph_objects as go
 
@@ -22,13 +24,6 @@ class MPC_Brancher():
         self.history = None
         return None
 
-    def reshape(self, array, shape):
-
-        # rows and columns
-        rows, cols = shape
-
-        # end
-        return array.reshape(cols, rows).T
 
     @property
     def states(self):
@@ -39,10 +34,10 @@ class MPC_Brancher():
     def states(self, val):
         assert isinstance(val, np.ndarray), "states must be a numpy.array."
 
-        assert val.shape[1] == self.cqr.order, \
+        assert val.shape[0] == self.cqr.order, \
             'Number of samples must be equal to the order of the NARX model!'
 
-        assert val.shape[0] == self.cqr.n_x, (
+        assert val.shape[1] == self.cqr.n_x, (
             'Expected number of states is: {}, but found {}'.format(self.cqr.n_x, val.shape[0]))
 
         # storage
@@ -59,10 +54,10 @@ class MPC_Brancher():
         if self.cqr.order>1:
             assert isinstance(val, np.ndarray), "inputs must be a numpy.array."
 
-            assert self.cqr.order - 1 == val.shape[1], \
+            assert self.cqr.order - 1 == val.shape[0], \
                 'Number of samples for inputs should be (order-1) !'
 
-            assert val.shape[0] == self.cqr.n_u, (
+            assert val.shape[1] == self.cqr.n_u, (
                 'Expected number of inputs is: {}, but found {}'.format(self.cqr.n_u, val.shape[0]))
 
             # storage
@@ -78,26 +73,14 @@ class MPC_Brancher():
         states = self.states
         inputs = self.inputs
 
-        order = self.cqr.order
-        state_order = order
-        input_order = order - 1
-
-        state_samples = states.shape[1]
-        input_samples = inputs.shape[1]
-
-        # ensuring this is the current input
-        # stacking states and inputs with order
-        order_states = np.vstack([states[:, state_order - i - 1:state_samples - i] for i in range(state_order)])
-
-        # if order is 2 or more, only then previous inputs are needed
-        if order > 1:
-            order_inputs = np.vstack([inputs[:, input_order - i - 1:input_samples - i] for i in range(input_order)])
-
-            # stacking states and inputs for narx model
-            initial_cond = np.vstack([order_states, order_inputs])
+        if self.cqr.order>1:
+            init_state = states.reshape((-1, 1))
+            init_input = inputs.reshape((-1, 1))
+            initial_cond = np.vstack([init_state,
+                                      init_input])
 
         else:
-            initial_cond = order_states
+            initial_cond = states.reshape((-1, 1))
 
         # storage
         self.initial_cond = initial_cond
@@ -120,71 +103,104 @@ class MPC_Brancher():
         # end
         return None
 
-    def make_step(self, x0, max_iter=10, enable_plots = False):
+
+    def bounds_extractor(self, mpc, bnd_type, var_type):
+        assert bnd_type == 'upper' or bnd_type == 'lower', "Only supported types are upper and lower."
+        assert var_type == '_x' or var_type == '_u', "Only supported types are _x and _u."
+
+        if var_type == '_x':
+            for i in range(mpc.model.x.master.shape[0]):
+                bnd_n = np.array(mpc.bounds[bnd_type, var_type, str(mpc.model.x.master[i, 0])])
+
+                if i == 0:
+                    bnd = bnd_n
+                else:
+                    bnd = np.vstack([bnd, bnd_n])
+
+        elif var_type == '_u':
+            for i in range(mpc.model.u.master.shape[0]):
+                bnd_n = np.array(mpc.bounds[bnd_type, var_type, str(mpc.model.u.master[i, 0])])
+
+                if i == 0:
+                    bnd = bnd_n
+                else:
+                    bnd = np.vstack([bnd, bnd_n])
+
+        return bnd
+
+
+    def bounds_setter(self, mpc, bnd_type, var_type, bnd_val):
+        assert bnd_type == 'upper' or bnd_type == 'lower', "Only supported types are upper and lower."
+        assert var_type == '_x' or var_type == '_u', "Only supported types are _x and _u."
+
+        if var_type == '_x':
+            for i, bnd_val_n in enumerate(bnd_val.flatten().tolist()):
+                mpc.bounds[bnd_type, var_type, str(mpc.model.x.master[i, 0])] = bnd_val_n
+
+        elif var_type == '_u':
+            for i, bnd_val_n in enumerate(bnd_val.flatten().tolist()):
+                mpc.bounds[bnd_type, var_type, str(mpc.model.u.master[i, 0])] = bnd_val_n
+
+
+        return None
+
+
+
+    def make_step(self, x0, max_iter=3, enable_plots = False):
 
         assert x0.shape==(self.cqr.n_x, 1), \
             f"x0 should have shape ({self.cqr.n_x}, 1). Shape found instead is: {x0.shape}"
 
         # init
-        initial_cond = self.initial_cond
-        n_x = self.cqr.n_x
-        n_u = self.cqr.n_u
-        order = self.cqr.order
-        # segregating states and inputs
-        states = initial_cond[0:n_x * order, :]
-        inputs = initial_cond[n_x * order:, :]
-        narx_state_length = order * n_x + (order - 1) * n_u
-        prev_ubx = self.mpc.bounds['upper', '_x', 'system_state']
-        prev_lbx = self.mpc.bounds['lower', '_x', 'system_state']
-        plots = []
         all_branches = []
+        plots = []
+        all_boundaries = []
 
-        all_boundaries =[]
+        # take the new x0 and generate new initial condition
+        pseudo_state_history = np.vstack([x0.reshape((1, -1)),
+                                  self.states[:-1, :]])
+        self.states = pseudo_state_history
+        x0_pseudo = self._generate_initial_guess()
 
-        # next pesudo step
-        pseudo_input = self.inputs
-        pseudo_state = np.hstack([self.states[:, 1:], x0])
-        x0_stacked = np.vstack([x0, states[0:n_x * (order - 1)], inputs])
+        # extracting and storing boundaries
+        default_lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
+        default_ubx  = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
 
-        # determining optimal input
         for i in range(max_iter):
             # init
-            adjust_falg = False
-            self.inputs = pseudo_input
-            self.states = pseudo_state
-            self.set_initial_guess()
+            adjust_flag = False
 
-            # making mpc prediction
-            u0 = self.mpc.make_step(x0=x0_stacked)
+            # creates a copy of the mpc class, so that if the make_setp does not give satisfactory results,
+            # this class can be dumped
+            #dummy_mpc = copy.deepcopy(self.mpc)
+            #dummy_mpc = dill.loads(dill.dumps(self.mpc))
+
+            # do make step
+            #u0 = dummy_mpc.make_step(x0=x0_pseudo)
+            u0 = self.mpc.make_step(x0=x0_pseudo)
+
+            lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
+            ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
+            boundaries = {}
+            boundaries['lbx'] = lbx
+            boundaries['ubx'] = ubx
+            all_boundaries.append(boundaries)
 
             # extracting optimal trajectories
             u_traj = self.mpc.opt_x_num['_u']
-            x_traj = self.mpc.opt_x_num['_x']
-
-            # simulating cqr with this optimal trajectory
-            x_traj_numpy = np.array([entry[0][0].full().flatten() for entry in x_traj]).T
-            u_traj_numpy = np.array([entry[0][0].full().flatten() for entry in u_traj]).T
-
-            x0_next = self.reshape(x_traj_numpy[0:n_x,0], shape=(n_x, 1))
+            u_traj_numpy = np.array([entry[0][0].full().flatten() for entry in u_traj])
 
             # setting up cqr
-            self.cqr.states = pseudo_state
-            self.cqr.inputs = pseudo_input
+            self.cqr.states = pseudo_state_history
+            if self.cqr.order>1:
+                self.cqr.inputs = self.inputs
             self.cqr.set_initial_guess()
 
-            # extraction of mpc boundaries
-            ubx = self.mpc.bounds['upper', '_x', 'system_state']
-            lbx = self.mpc.bounds['lower', '_x', 'system_state']
-            boundaries = {}
-            boundaries['lbx'] = lbx.full()[0: self.cqr.n_x, :]
-            boundaries['ubx'] = ubx.full()[0: self.cqr.n_x, :]
-            all_boundaries.append(boundaries)
-
             # make branch prediction
-            branches = self.cqr.make_branch(u0_traj = u_traj_numpy, confidence_cutoff=self.confidence_cutoff)
+            branches = self.cqr.make_branch(u0_traj=u_traj_numpy, confidence_cutoff=self.confidence_cutoff)
 
             # reading the results
-            all_states = np.hstack(branches['states'])
+            all_states = np.vstack(branches['states'])
 
             # storage
             if enable_plots:
@@ -192,41 +208,41 @@ class MPC_Brancher():
                 plots.append(self.cqr.plot_branch(t0=self.t0, show_plot=False))
 
             # checking if all the predicted states saty inside the boundary
-            for i in range(all_states.shape[1]):
-                current_state = self.reshape(all_states[:,i], shape=(n_x, 1))
-                if np.any(current_state < lbx.full()[0: self.cqr.n_x, :]) or np.all(current_state > ubx.full()[0: self.cqr.n_x, :]):
-                    adjust_falg = True
+            for i in range(all_states.shape[0]):
+                current_state = all_states[i, :].reshape((1, -1))
+                if np.any(current_state < lbx.reshape((-1,))[0: self.cqr.n_x]) or np.all(
+                        current_state > ubx.reshape((-1,))[0: self.cqr.n_x]):
+                    adjust_flag = True
                     break
 
             # exit loop
-            if adjust_falg==False or i==max_iter-1:
+            if adjust_flag == False or i == max_iter - 1:
                 break
 
             # tighten up state boundaries
             else:
-                range_x = ubx-lbx
+                range_x = ubx - lbx
                 range_x = range_x[0:self.cqr.n_x, :]
 
-                new_lbx = np.vstack([lbx[0:self.cqr.n_x, :] + self.tightner * range_x, np.full((narx_state_length - n_x, 1), -np.inf)])
-                new_ubx = np.vstack([ubx[0:self.cqr.n_x, :] - self.tightner * range_x, np.full((narx_state_length - n_x, 1), np.inf)])
+                new_lbx = lbx[0:self.cqr.n_x, :] + self.tightner * range_x
+                new_ubx = ubx[0:self.cqr.n_x, :] - self.tightner * range_x
 
-                self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
-                self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx
+                #self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
+                #self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx
+                self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=new_ubx)
+                self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_x', bnd_val=new_lbx)
 
-                self.mpc.reset_history()
+                #self.mpc.reset_history()
 
-        # pushing back the old boundaries for next make step
-        self.mpc.bounds['upper', '_x', 'system_state'] = prev_ubx
-        self.mpc.bounds['lower', '_x', 'system_state'] = prev_lbx
+        # if recalculation not needed, revert back to the system boundaries for the state
+        self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=default_ubx)
+        self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_x', bnd_val=default_lbx)
 
-        # shifitng initial condition
-        next_state_history = np.vstack([states[n_x:n_x * (order)], x0])
-        next_input_history = np.vstack([inputs[n_u:n_u * (order - 1)], u0])
-
-        # pushing it to class
-        self.states = self.reshape(next_state_history, shape=(n_x, -1))
-        self.inputs = self.reshape(next_input_history, shape=(n_u, -1))
-        self._generate_initial_guess()
+        # push the new u0 into the new initial condition
+        if self.cqr.order>1:
+            pseudo_input_history = np.vstack([u0.reshape((1, -1)),
+                                              self.inputs[:-1, :]])
+            self.inputs = pseudo_input_history
 
         # storage
         self.t0 += self.mpc.settings.t_step
@@ -250,11 +266,10 @@ class MPC_Brancher():
 
             self.history = history
 
-
         if enable_plots:
             self.all_branches = all_branches
             self.plots = plots
-            self.all_boundaries=all_boundaries
+            self.all_boundaries = all_boundaries
 
         # end
         return u0

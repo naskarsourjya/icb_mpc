@@ -544,39 +544,6 @@ class cqr_narx():
         return None
 
 
-    def _post_processing_old(self, y):
-
-        y = y.cpu().numpy()
-
-        # init
-        n_x = self.n_x
-        Q1_alpha = self.Q1_alpha
-        n_samples = y.shape[1]
-
-        # stacking states
-        states = y[0:n_x,:]
-        stacked_states = np.vstack([states] * 3)
-
-        # stacking errors
-        errors = y[n_x:, :]
-        stacked_errors = np.vstack([np.zeros((n_x, n_samples)), errors])
-
-        # stacking conformalisation
-        conform = np.hstack([Q1_alpha] * n_samples)
-        stacked_confrom = np.vstack([np.zeros((n_x, n_samples)), conform, -conform])
-
-        # final prediction
-        pred = stacked_states + stacked_errors + stacked_confrom
-
-        # extracting the quantiles
-        x0 = pred[0:n_x, :]
-        x0_cqr_high = pred[n_x:2 * n_x, :]
-        x0_cqr_low = pred[2 * n_x:, :]
-
-        # end
-        return x0, x0_cqr_high, x0_cqr_low
-
-
     def _post_processing(self, y):
 
         # init
@@ -902,69 +869,58 @@ class cqr_narx():
 
 
     def make_branch(self, u0_traj, confidence_cutoff=0.5):
-        assert self.flags['qr_ready'], "Qunatile regressor not ready."
-        assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
+        assert self.flags['qr_ready'], "Quantile regressor not ready."
+        assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
         assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
-        assert u0_traj.shape[0] == self.n_u, \
-            f"u0 should have have {self.n_u} rows but instead found {u0_traj.shape[0]}!"
+        assert u0_traj.shape[1] == self.n_u, \
+            f"u0 should have have {self.n_u} columns but instead found {u0_traj.shape[1]}!"
 
-        # storage for later retreival
+        # storage for later retrieval
         n_x = self.n_x
         n_u = self.n_u
         order = self.order
-        prev_ic = self.initial_cond
-        current_ic = self.initial_cond
-        states_branch = [self.initial_cond[0:self.n_x]]
+        state_n = self.states.reshape((1, -1))
+        input_n = self.inputs.reshape((1, -1))
         alpha_branch = [1-self.alpha]
         time_branch = [0.0]
-        steps = u0_traj.shape[1]
+        steps = u0_traj.shape[0]
+        states_branch = [self.states[0, :].reshape(1, -1)]
 
         # generating the branches
         for i in range(steps):
 
             # init
-            u0 = self.reshape(u0_traj[:,i], shape=(n_u, 1))
-            n_samples = current_ic.shape[1]
+            u0 = u0_traj[i,:].reshape((1, -1))
+            n_samples = state_n.shape[0]
 
             # segregating states and inputs
-            states = current_ic[0:n_x * order, :]
-            inputs = current_ic[n_x * order:, :]
-            u0_stacked = np.hstack([u0] * n_samples)
+            u0_stacked = np.vstack([u0] * n_samples)
 
             # stacking all data
-            X = np.vstack([states, u0_stacked, inputs])
-
-            # scaling
-            #X_scaled = self.scaler.transform(X.T)
+            X = np.hstack([state_n, u0_stacked, input_n])
 
             # setting default device
             self._set_device(torch_device=self.full_model.torch_device)
 
             # narx_input = self.input_preprocessing(states=order_states, inputs=order_inputs)
-            X_torch = torch.tensor(X.T, dtype=self.dtype)
+            X_torch = torch.tensor(X, dtype=self.dtype)
 
             # making full model prediction
             with torch.no_grad():
-                y_pred = self.full_model(X_torch).T
+                y_pred = self.full_model(X_torch)
 
             # doing postprocessing containing the conformalisation step
             x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
 
-            # generate new current_ic for next branch
-            # mean side
-            next_mean_ic = np.vstack([x0, states[0:n_x*(order-1), :], u0_stacked, inputs[0:n_u*(order-2), :]])
+            # stacking outputs
+            x0_next = np.vstack([x0, x0_cqr_high, x0_cqr_low])
 
-            # high side
-            next_high_ic = np.vstack([x0_cqr_high, states[0:n_x*(order-1), :], u0_stacked, inputs[0:n_u*(order-2), :]])
-
-            #low side
-            next_low_ic = np.vstack([x0_cqr_low, states[0:n_x*(order-1), :], u0_stacked, inputs[0:n_u*(order-2), :]])
-
-            # preparing ic's for the next iteration
-            current_ic = np.hstack([next_mean_ic, next_high_ic, next_low_ic])
+            # preparing the next initial conditions
+            state_n = np.hstack([x0_next, np.vstack([state_n]*3)])[:, 0:n_x*order]
+            input_n = np.hstack([np.vstack([u0]*x0_next.shape[0]), np.vstack([input_n]*3)])[:, 0:n_u*(order-1)]
 
             # stores the branched states
-            states_branch.append(np.hstack([x0, x0_cqr_high, x0_cqr_low]))
+            states_branch.append(np.vstack([x0, x0_cqr_high, x0_cqr_low]))
             alpha_branch.append(alpha_branch[-1]*(1-self.alpha))
             time_branch.append(time_branch[-1] + self.t_step)
 
@@ -973,7 +929,6 @@ class cqr_narx():
                 break
 
         # reverting back to previous ic
-        self.initial_cond = prev_ic
         self.confidence_cutoff = confidence_cutoff
 
         # storage
@@ -1013,7 +968,7 @@ class cqr_narx():
                     # Add shaded region for confidence
                     fig.add_trace(go.Scatter(
                         x=[time_stamps[j], time_stamps[j+1], time_stamps[j+1], time_stamps[j]],
-                        y=[min(states[j][i,:]), min(states[j+1][i,:]), max(states[j+1][i,:]), max(states[j][i,:])],
+                        y=[min(states[j][:, i]), min(states[j+1][:, i]), max(states[j+1][:, i]), max(states[j][:, i])],
                         fill="toself",
                         fillcolor=f"rgba(255, 255, 0, {alphas[j]})",  # Grey shaded region
                         line=dict(color="rgba(255,255,255,0)"),  # No border
@@ -1022,14 +977,14 @@ class cqr_narx():
                         row=i + 1, col=1)
 
 
-                fig.add_trace(go.Scatter(x=[t]*states[j][i,:].shape[0], y=states[j][i,:],
+                fig.add_trace(go.Scatter(x=[t]*states[j][:,i].shape[0], y=states[j][:, i],
                                          mode='markers', name=f'Branches',
                                          marker=dict(color='pink', size=2),
                                          showlegend=True if i==0 and j==0 else False),
                               row=i + 1, col=1)
 
                 # extracting mean prediction
-                mean_prediction.append(states[j][i, 0])
+                mean_prediction.append(states[j][0, i])
 
             # making the mean prediction
             fig.add_trace(go.Scatter(x=time_stamps, y=mean_prediction,
@@ -1043,7 +998,7 @@ class cqr_narx():
 
         for j in range(n_u):
             # making the mean prediction
-            fig.add_trace(go.Scatter(x=time_stamps, y=u0_traj[j,:],
+            fig.add_trace(go.Scatter(x=time_stamps, y=u0_traj[:, j],
                                      mode='lines',
                                      line=dict(color='red', dash='dash'), name='Input Trajectory',
                                      showlegend=False),

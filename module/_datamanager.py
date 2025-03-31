@@ -518,7 +518,7 @@ class DataManager(plotter):
         narx_state_length = order * n_x + (order - 1) * n_u
 
         # states of system
-        x = model.x["system_state"][0:n_x]
+        x = model.x.master[0:n_x]
         x_ref = model.tvp['state_ref']
 
         # generating mpc class
@@ -537,27 +537,29 @@ class DataManager(plotter):
         # setting up cost function
         #mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
         #mterm = (x_ref[0] - x[0]) ** 2 # tracking only the  first state
-        mterm = (0 -x[0]) ** 2
+        mterm = (0.009 -x[0]) ** 2
 
         # passing objective function
         mpc.set_objective(mterm=mterm, lterm=mterm)
 
         # input penalisation
-        mpc.set_rterm(system_input=r)
+        mpc.set_rterm(input_1_lag_0=r)
 
         # setting up boundaries for mpc: lower bound for states
-        lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.inf)])
-        mpc.bounds['lower', '_x', 'system_state'] = lbx
+        #lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.inf)])
+        mpc.bounds['lower', '_x', 'state_1_lag_1'] = self.data['lbx'][0]
+        mpc.bounds['lower', '_x', 'state_2_lag_1'] = self.data['lbx'][1]
 
         # upper bound for states
-        ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.inf)])
-        mpc.bounds['upper', '_x', 'system_state'] = ubx
+        #ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.inf)])
+        mpc.bounds['upper', '_x', 'state_1_lag_1'] = self.data['ubx'][0]
+        mpc.bounds['upper', '_x', 'state_2_lag_1'] = self.data['ubx'][1]
 
         # lower bound for inputs
-        mpc.bounds['lower', '_u', 'system_input'] = self.data['lbu'].reshape(-1,1)
+        mpc.bounds['lower', '_u', 'input_1_lag_0'] = self.data['lbu']
 
         # upper bound for inputs
-        mpc.bounds['upper', '_u', 'system_input'] = self.data['ubu'].reshape(-1,1)
+        mpc.bounds['upper', '_u', 'input_1_lag_0'] = self.data['ubu']
 
         # enter random setpoints inside the box constraints
         tvp_template = mpc.get_tvp_template()
@@ -592,7 +594,8 @@ class DataManager(plotter):
 
     def run_simulation(self, system, iter, n_horizon, r, store_gif=False):
         # init
-        narx_inputs = self.data['test_inputs']
+        df = self.data['test']
+        narx_inputs = df[self.data['x_label']]
         #narx_outputs = self.data['test_outputs']
         n_x = self.data['n_x']
         n_u = self.data['n_u']
@@ -612,29 +615,32 @@ class DataManager(plotter):
         # take initial guess from test data
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
 
+        # extracting data
+        states_history = narx_inputs[[col for col in narx_inputs.columns if col.startswith('state')]]
+        u0 = narx_inputs[[col for col in narx_inputs.columns if col.startswith('input') and col.endswith('lag_0')]]
+        inputs_history = narx_inputs[[col for col in narx_inputs.columns if col.startswith('input') and not col.endswith('lag_0')]]
+
         # extracting random column
-        states_history = narx_inputs[0:n_x * order, rnd_col]
-        inputs_n = narx_inputs[n_x * order:, rnd_col]
-        u0 = inputs_n[0:n_u]
-        inputs_history = inputs_n[n_u:]
+        states_history = states_history.to_numpy()[rnd_col, :]
+        inputs_history = inputs_history.to_numpy()[rnd_col, :]
 
         # setting initial guess to mpc if order > 1
         if order > 1:
             # set initial guess for surrogate simulator
             #self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
             #                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
-            cqr_mpc.states=self.reshape(states_history, shape=(n_x, -1))
-            cqr_mpc.inputs=self.reshape(inputs_history, shape=(n_u, -1))
+            cqr_mpc.states= states_history.reshape((-1, n_x))
+            cqr_mpc.inputs= inputs_history.reshape((-1, n_u))
             cqr_mpc.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
             #self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
-            cqr_mpc.states=self.reshape(states_history, shape=(n_x, -1))
+            cqr_mpc.states= states_history.reshape((-1, n_x))
             cqr_mpc.set_initial_guess()
 
         # extracting the most recent initial state for the data
-        x0 = self.reshape(states_history[0:n_x], shape=(n_x, 1))
+        x0 = states_history[0:n_x].reshape((n_x, 1))
 
         # setting initial guess to simulator
         simulator.x0=x0
