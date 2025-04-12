@@ -392,9 +392,3 @@ class Surrogate():
         # end
         return None
 
-
-
-
-
-
-

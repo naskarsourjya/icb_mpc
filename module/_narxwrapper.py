@@ -5,13 +5,14 @@ import plotly.graph_objects as go
 
 
 class MPC_Brancher():
-    def __init__(self, mpc, cqr, tightner = 0.05, confidence_cutoff= 0.75):
+    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search):
         # storage
         #super(mpc_narx, self).__init__(model=model)     # `self` is the do_mpc MPC Controller
         self.mpc = mpc
         self.cqr = cqr
         self.tightner = tightner
         self.confidence_cutoff = confidence_cutoff
+        self.max_search = max_search
 
         # setup runtime
         self.setup()
@@ -146,7 +147,7 @@ class MPC_Brancher():
 
 
 
-    def make_step(self, x0, max_iter=3, enable_plots = False):
+    def make_step(self, x0, enable_plots = False):
 
         assert x0.shape==(self.cqr.n_x, 1), \
             f"x0 should have shape ({self.cqr.n_x}, 1). Shape found instead is: {x0.shape}"
@@ -166,9 +167,7 @@ class MPC_Brancher():
         default_lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
         default_ubx  = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
 
-        for i in range(max_iter):
-            # init
-            adjust_flag = False
+        for i in range(self.max_search):
 
             # creates a copy of the mpc class, so that if the make_setp does not give satisfactory results,
             # this class can be dumped
@@ -207,34 +206,14 @@ class MPC_Brancher():
                 all_branches.append(branches)
                 plots.append(self.cqr.plot_branch(t0=self.t0, show_plot=False))
 
-            # checking if all the predicted states saty inside the boundary
-            for i in range(all_states.shape[0]):
-                current_state = all_states[i, :].reshape((1, -1))
-                if np.any(current_state < lbx.reshape((-1,))[0: self.cqr.n_x]) or np.all(
-                        current_state > ubx.reshape((-1,))[0: self.cqr.n_x]):
-                    adjust_flag = True
-                    break
+            # adjust bounds if necessary
+            adjust_flag = self._adjust_bounds(mpc=self.mpc, all_states=all_states,
+                                              default_lbx = default_lbx, default_ubx=default_ubx)
 
-            # exit loop
-            if adjust_flag == False or i == max_iter - 1:
+            if adjust_flag == False:
                 break
 
-            # tighten up state boundaries
-            else:
-                range_x = ubx - lbx
-                range_x = range_x[0:self.cqr.n_x, :]
-
-                new_lbx = lbx[0:self.cqr.n_x, :] + self.tightner * range_x
-                new_ubx = ubx[0:self.cqr.n_x, :] - self.tightner * range_x
-
-                #self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
-                #self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx
-                self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=new_ubx)
-                self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_x', bnd_val=new_lbx)
-
-                #self.mpc.reset_history()
-
-        # if recalculation not needed, revert back to the system boundaries for the state
+        # revert back to the system boundaries for the state
         self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=default_ubx)
         self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_x', bnd_val=default_lbx)
 
@@ -273,6 +252,71 @@ class MPC_Brancher():
 
         # end
         return u0
+
+
+    def _adjust_bounds(self, mpc, all_states, default_lbx, default_ubx):
+        # init
+        adjust_flag = False
+
+        # checking if all the predicted states saty inside the boundary
+        #for i in range(all_states.shape[0]):
+        #    current_state = all_states[i, :].reshape((1, -1))
+        #    if (np.any(current_state < lbx.reshape((-1,))[0: self.cqr.n_x]) or
+        #            np.any(current_state > ubx.reshape((-1,))[0: self.cqr.n_x])):
+        #        adjust_flag = True
+        #        break
+
+        default_lbx_matrix = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]]*all_states.shape[0])
+        default_ubx_matrix = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * all_states.shape[0])
+
+        if (np.any(all_states < default_lbx_matrix) or np.any(all_states > default_ubx_matrix)):
+            adjust_flag = True
+
+        # exit loop
+        if adjust_flag == True:
+
+            # init
+            default_range_x = default_ubx_matrix - default_lbx_matrix
+
+            # checking the protrusions above the upper boundary, if positive: boundary is crossed
+            upper_residue = all_states - default_ubx_matrix
+
+            # checking the protrusions below the lower boundary, if positive: boundary is crossed
+            lower_residue = - all_states + default_lbx_matrix
+
+            # replacing all negative values with zero
+            # since negative value signifies that boundary has not been crossed
+            upper_residue[upper_residue < 0] = 0
+            lower_residue[lower_residue < 0] = 0
+
+            # deviation above the boundary, averaged over all the samples
+            upper_shift = np.mean(upper_residue, axis=0)
+            lower_shift = np.mean(lower_residue, axis=0)
+
+            #upper_shift_factor = upper_shift / default_range_x
+            #lower_shift_factor = lower_shift / default_range_x
+
+            lbx = self.bounds_extractor(mpc=mpc, bnd_type='lower', var_type='_x')
+            ubx = self.bounds_extractor(mpc=mpc, bnd_type='upper', var_type='_x')
+
+            range_x = ubx - lbx
+            range_x = range_x[0:self.cqr.n_x, :]
+
+            adj_lower = self.tightner * lower_shift
+            adj_upper = self.tightner * upper_shift
+
+            new_lbx = lbx[0:self.cqr.n_x, :] + adj_lower.reshape((-1, 1))
+            new_ubx = ubx[0:self.cqr.n_x, :] - adj_upper.reshape((-1, 1))
+
+            # self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
+            # self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx
+            self.bounds_setter(mpc=mpc, bnd_type='upper', var_type='_x', bnd_val=new_ubx)
+            self.bounds_setter(mpc=mpc, bnd_type='lower', var_type='_x', bnd_val=new_lbx)
+
+            # self.mpc.reset_history()
+
+        return adjust_flag
+
 
 
     def plot_trials(self, show_plot=True):

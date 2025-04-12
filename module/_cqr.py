@@ -868,7 +868,7 @@ class cqr_narx():
         return None
 
 
-    def make_branch(self, u0_traj, confidence_cutoff=0.5):
+    def make_branch(self, u0_traj, confidence_cutoff):
         assert self.flags['qr_ready'], "Quantile regressor not ready."
         assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
         assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
@@ -920,7 +920,12 @@ class cqr_narx():
             input_n = np.hstack([np.vstack([u0]*x0_next.shape[0]), np.vstack([input_n]*3)])[:, 0:n_u*(order-1)]
 
             # stores the branched states
-            states_branch.append(np.vstack([x0, x0_cqr_high, x0_cqr_low]))
+            if confidence_cutoff == 1:
+
+                # branches not stored if confidence_cutoff = 1, equivalent to nominal mpc
+                states_branch.append(np.vstack([x0]))
+            else:
+                states_branch.append(np.vstack([x0, x0_cqr_high, x0_cqr_low]))
             alpha_branch.append(alpha_branch[-1]*(1-self.alpha))
             time_branch.append(time_branch[-1] + self.t_step)
 

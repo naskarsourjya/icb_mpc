@@ -1,5 +1,3 @@
-from unittest.mock import inplace
-
 import numpy as np
 import pandas as pd
 import pickle
@@ -509,7 +507,8 @@ class DataManager(plotter):
         return None
 
 
-    def step_state_mpc(self, model, n_horizon, r, cqr, iter, step_mag=0.01, suppress_ipopt=False):
+    def step_state_mpc(self, model, n_horizon, r, cqr, tightner, confidence_cutoff,
+                       setpoint, max_search, suppress_ipopt=False):
 
         # init
         n_x = self.data['n_x']
@@ -537,7 +536,8 @@ class DataManager(plotter):
         # setting up cost function
         #mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
         #mterm = (x_ref[0] - x[0]) ** 2 # tracking only the  first state
-        mterm = (0.009 -x[0]) ** 2
+        mterm = (setpoint -x[0]) ** 2
+        #mterm = (0 - x[0]) ** 2
 
         # passing objective function
         mpc.set_objective(mterm=mterm, lterm=mterm)
@@ -582,7 +582,8 @@ class DataManager(plotter):
         mpc.setup()
 
         # storage
-        self.cqr_mpc = MPC_Brancher(mpc=mpc, cqr=cqr)
+        self.cqr_mpc = MPC_Brancher(mpc=mpc, cqr=cqr, confidence_cutoff=confidence_cutoff,
+                                    tightner=tightner, max_search=max_search)
 
         # flag update
         self.flags.update({
@@ -592,7 +593,8 @@ class DataManager(plotter):
         # end
         return self.cqr_mpc
 
-    def run_simulation(self, system, iter, n_horizon, r, store_gif=False):
+    def run_simulation(self, system, iter, n_horizon, r, tightner,
+                       confidence_cutoff, setpoint, max_search, store_gif=False):
         # init
         df = self.data['test']
         narx_inputs = df[self.data['x_label']]
@@ -610,7 +612,9 @@ class DataManager(plotter):
 
         # getting controller with surrogate model inside the mpc
         surrogate_model = self.narx_2_dompc()
-        cqr_mpc = self.step_state_mpc(model=surrogate_model, n_horizon=n_horizon, r=r, cqr=self.cqr, iter=iter)
+        cqr_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r,
+                                      cqr=self.cqr, tightner=tightner, confidence_cutoff=confidence_cutoff,
+                                      max_search=max_search)
 
         # take initial guess from test data
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
@@ -651,7 +655,7 @@ class DataManager(plotter):
         #for _ in tqdm(range(iter), desc='Simulating'):
         for _ in range(iter):
 
-            u0 = cqr_mpc.make_step(x0, max_iter=5, enable_plots = True)
+            u0 = cqr_mpc.make_step(x0, enable_plots = True)
             #x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0)
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)

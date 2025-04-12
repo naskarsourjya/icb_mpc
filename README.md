@@ -108,7 +108,21 @@ rewrite calculate surrogate error to calculate errors in matrix instead of make_
 
 There is translation problem when the pytorch model is converted to do_mpc model. SInce do_mpc is based on casadi which only supports float64, and we are using multiple datatypes in the pytorch, we are getting issues whrn the nn has large nodes or it is very deep.
 
+# Week 12
 
+Ensure when confidence = 1, cqr does not branch out and algo is equivalent to nominal mpc.
+
+Reduce constraints only for states which are violated.
+
+Discuss mpc cloning problem (tvp initialisation issue): Sol: reinit mpc in every make step. Have a new stepoint state instead of tvp.
+
+adding random points in between (monte carlo style)
+
+Collect data nmpc vs robust mpc. Hyperparameter tuning.
+
+# Week 13
+If the bounds are too outside, the lbx may go above ubx. Should we have an upper limit for the adjustment factor?
+I am thinking about multiplying probability values with the states, because generally the states with the lower probability values are the ones which go further away from the boundary.
 
 ## todo
 
