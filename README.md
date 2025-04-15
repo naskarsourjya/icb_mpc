@@ -110,19 +110,20 @@ There is translation problem when the pytorch model is converted to do_mpc model
 
 # Week 12
 
-Ensure when confidence = 1, cqr does not branch out and algo is equivalent to nominal mpc.
+Ensure when confidence = 1, cqr does not branch out and algo is equivalent to nominal mpc. Done.
 
-Reduce constraints only for states which are violated.
+Reduce constraints only for states which are violated. Done.
 
-Discuss mpc cloning problem (tvp initialisation issue): Sol: reinit mpc in every make step. Have a new stepoint state instead of tvp.
+Discuss mpc cloning problem (tvp initialisation issue): Sol: reinit mpc in every make step. Have a new stepoint state instead of tvp. Done
+
+# Week 13
 
 adding random points in between (monte carlo style)
 
-Collect data nmpc vs robust mpc. Hyperparameter tuning.
-
-# Week 13
 If the bounds are too outside, the lbx may go above ubx. Should we have an upper limit for the adjustment factor?
 I am thinking about multiplying probability values with the states, because generally the states with the lower probability values are the ones which go further away from the boundary.
+
+Collect data nmpc vs robust mpc. Hyperparameter tuning.
 
 ## todo
 

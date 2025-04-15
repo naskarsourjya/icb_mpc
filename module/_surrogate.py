@@ -60,6 +60,8 @@ class Surrogate():
 
         # used by random state tracking algo
         state_ref = model.set_variable(var_type='_tvp', var_name='state_ref', shape=(self.n_x, 1))
+        #ref_x = model.set_variable(var_type='_x', var_name='ref_x', shape=(self.n_x, 1))
+        #ref_u = model.set_variable(var_type='_u', var_name='ref_u', shape=(self.n_x, 1))
 
         # scaled input layer
         input_layer_scaled = self.scale_input_layer(input_layer, narx.scaler)
@@ -131,7 +133,7 @@ class Surrogate():
                     print(f"{var_name} <<--- {rhs_n}")
 
         # setting rhs
-        #model.set_rhs('system_state', rhs)
+        #model.set_rhs(ref_x, ref_u)
         model.setup()
 
         # storage

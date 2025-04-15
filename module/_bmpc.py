@@ -68,13 +68,26 @@ class MPC_Brancher():
         else:
             raise ValueError("Inputs cannot be set for system with order <= 1.")
 
-    def _generate_initial_guess(self):
+    def _generate_initial_guess(self, states, inputs=None):
 
-        # init
-        states = self.states
-        inputs = self.inputs
+        assert isinstance(states, np.ndarray), "states must be a numpy.array."
+
+        assert states.shape[0] == self.cqr.order, \
+            'Number of samples must be equal to the order of the NARX model!'
+
+        assert states.shape[1] == self.cqr.n_x, (
+            'Expected number of states is: {}, but found {}'.format(self.cqr.n_x, states.shape[0]))
 
         if self.cqr.order>1:
+
+            assert isinstance(inputs, np.ndarray), "inputs must be a numpy.array."
+
+            assert self.cqr.order - 1 == inputs.shape[0], \
+                'Number of samples for inputs should be (order-1) !'
+
+            assert inputs.shape[1] == self.cqr.n_u, (
+                'Expected number of inputs is: {}, but found {}'.format(self.cqr.n_u, inputs.shape[0]))
+
             init_state = states.reshape((-1, 1))
             init_input = inputs.reshape((-1, 1))
             initial_cond = np.vstack([init_state,
@@ -83,23 +96,17 @@ class MPC_Brancher():
         else:
             initial_cond = states.reshape((-1, 1))
 
-        # storage
-        self.initial_cond = initial_cond
-
+        # end
         return initial_cond
 
 
     def set_initial_guess(self):
 
         # calculate initial guess
-        initial_cond = self._generate_initial_guess()
+        initial_cond = self._generate_initial_guess(states=self.states, inputs=self.inputs)
 
-        # passing initial cond
-        self.mpc.x0 = initial_cond
-        self.mpc.set_initial_guess()
-
-
-        #self.mpc['history'] = None
+        # resetting history
+        self.history = None
 
         # end
         return None
@@ -156,12 +163,13 @@ class MPC_Brancher():
         all_branches = []
         plots = []
         all_boundaries = []
+        prev_state = self.states
+        prev_input = self.inputs
 
         # take the new x0 and generate new initial condition
-        pseudo_state_history = np.vstack([x0.reshape((1, -1)),
+        current_state = np.vstack([x0.reshape((1, -1)),
                                   self.states[:-1, :]])
-        self.states = pseudo_state_history
-        x0_pseudo = self._generate_initial_guess()
+        x0_current = self._generate_initial_guess(states=current_state, inputs=prev_input)
 
         # extracting and storing boundaries
         default_lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
@@ -169,14 +177,15 @@ class MPC_Brancher():
 
         for i in range(self.max_search):
 
-            # creates a copy of the mpc class, so that if the make_setp does not give satisfactory results,
-            # this class can be dumped
-            #dummy_mpc = copy.deepcopy(self.mpc)
-            #dummy_mpc = dill.loads(dill.dumps(self.mpc))
+            # reinit to old state
+            prev_ic = self._generate_initial_guess(states=prev_state, inputs=prev_input)
+
+            # passing initial cond
+            self.mpc.x0 = prev_ic
+            self.mpc.set_initial_guess()
 
             # do make step
-            #u0 = dummy_mpc.make_step(x0=x0_pseudo)
-            u0 = self.mpc.make_step(x0=x0_pseudo)
+            u0 = self.mpc.make_step(x0=x0_current)
 
             lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
@@ -190,7 +199,7 @@ class MPC_Brancher():
             u_traj_numpy = np.array([entry[0][0].full().flatten() for entry in u_traj])
 
             # setting up cqr
-            self.cqr.states = pseudo_state_history
+            self.cqr.states = current_state
             if self.cqr.order>1:
                 self.cqr.inputs = self.inputs
             self.cqr.set_initial_guess()
@@ -222,6 +231,7 @@ class MPC_Brancher():
             pseudo_input_history = np.vstack([u0.reshape((1, -1)),
                                               self.inputs[:-1, :]])
             self.inputs = pseudo_input_history
+        self.states = current_state
 
         # storage
         self.t0 += self.mpc.settings.t_step
@@ -313,7 +323,7 @@ class MPC_Brancher():
             self.bounds_setter(mpc=mpc, bnd_type='upper', var_type='_x', bnd_val=new_ubx)
             self.bounds_setter(mpc=mpc, bnd_type='lower', var_type='_x', bnd_val=new_lbx)
 
-            # self.mpc.reset_history()
+            self.mpc.reset_history()
 
         return adjust_flag
 

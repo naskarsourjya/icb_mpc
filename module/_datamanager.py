@@ -13,7 +13,7 @@ from plotly.subplots import make_subplots
 
 
 from ._graphics import plotter
-from ._narxwrapper import MPC_Brancher
+from ._bmpc import MPC_Brancher
 from ._narx import narx
 from ._cqr import cqr_narx
 from ._surrogate import Surrogate
