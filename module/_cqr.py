@@ -9,7 +9,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from ._neuralnetwork import Regressor, MergedModel
 
 class cqr_narx():
-    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=None, debug=True, dtype=torch.float64):
+    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=0, debug=True, dtype=torch.float64):
         if set_seed is not None:
             np.random.seed(set_seed)
 
@@ -47,6 +47,12 @@ class cqr_narx():
         }
 
         #end
+
+
+    def set_config(self, rnd_samples, confidence_cutoff):
+        self.rnd_samples = rnd_samples
+        self.confidence_cutoff = confidence_cutoff
+        return None
 
 
     def _set_device(self, torch_device):
@@ -868,7 +874,7 @@ class cqr_narx():
         return None
 
 
-    def make_branch(self, u0_traj, confidence_cutoff):
+    def make_branch(self, u0_traj):
         assert self.flags['qr_ready'], "Quantile regressor not ready."
         assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
         assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
@@ -912,29 +918,47 @@ class cqr_narx():
             # doing postprocessing containing the conformalisation step
             x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
 
+            # finding the upper limit
+            states_3d = np.stack([x0, x0_cqr_high, x0_cqr_low], axis=0)
+
+            # finding the limits per row and col
+            max_states = np.max(states_3d, axis=0)
+            min_states = np.min(states_3d, axis=0)
+
+            # sanity check
+            assert np.all(max_states>=min_states), ("Some values of the in the max_states in < min_states, "
+                                                    "which is not expected. Should not happen if "
+                                                    "the system is monotonic.")
+
+            # generating random points between the max and the min
+            random_states = np.random.uniform(
+                low=min_states,
+                high=max_states,
+                size=(self.rnd_samples, *x0.shape)
+            )
+
+            random_states_2d = random_states.reshape((-1, self.n_x))
+
             # stacking outputs
-            x0_next = np.vstack([x0, x0_cqr_high, x0_cqr_low])
+            x0_next = np.vstack([x0, x0_cqr_high, x0_cqr_low, random_states_2d])
 
             # preparing the next initial conditions
-            state_n = np.hstack([x0_next, np.vstack([state_n]*3)])[:, 0:n_x*order]
-            input_n = np.hstack([np.vstack([u0]*x0_next.shape[0]), np.vstack([input_n]*3)])[:, 0:n_u*(order-1)]
+            state_n = np.hstack([x0_next, np.vstack([state_n]*(3 + self.rnd_samples))])[:, 0:n_x*order]
+            input_n = np.hstack([np.vstack([u0]*x0_next.shape[0]), np.vstack([input_n]*(3 + self.rnd_samples))])[:, 0:n_u*(order-1)]
 
             # stores the branched states
-            if confidence_cutoff == 1:
+            if self.confidence_cutoff == 1:
 
                 # branches not stored if confidence_cutoff = 1, equivalent to nominal mpc
                 states_branch.append(np.vstack([x0]))
             else:
-                states_branch.append(np.vstack([x0, x0_cqr_high, x0_cqr_low]))
+                states_branch.append(x0_next)
             alpha_branch.append(alpha_branch[-1]*(1-self.alpha))
             time_branch.append(time_branch[-1] + self.t_step)
 
             # force cutoff is confidence is low
-            if alpha_branch[-1] < confidence_cutoff:
+            if alpha_branch[-1] < self.confidence_cutoff:
                 break
-
-        # reverting back to previous ic
-        self.confidence_cutoff = confidence_cutoff
 
         # storage
         self.branches = {'states': states_branch,

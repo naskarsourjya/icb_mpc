@@ -205,7 +205,7 @@ class MPC_Brancher():
             self.cqr.set_initial_guess()
 
             # make branch prediction
-            branches = self.cqr.make_branch(u0_traj=u_traj_numpy, confidence_cutoff=self.confidence_cutoff)
+            branches = self.cqr.make_branch(u0_traj=u_traj_numpy)
 
             # reading the results
             all_states = np.vstack(branches['states'])

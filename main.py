@@ -57,7 +57,7 @@ dm.train_individual_qr(alpha=0.01, hidden_layers=[1], batch_size=1000,
 
 #dm.check_simulator(system=spring_system, iter= 50)
 dm.run_simulation(system=spring_system, iter=2, n_horizon=10, r=0.01, store_gif=True, tightner=0.005,
-                  confidence_cutoff=0.5, setpoint=0.009, max_search=5)
+                  confidence_cutoff=0.5, rnd_samples=7, setpoint=0.009, max_search=5)
 dm.plot_simulation()
 #dm.show_gif()
 

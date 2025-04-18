@@ -461,7 +461,7 @@ class DataManager(plotter):
         # cqr class init
         self.cqr = cqr_narx(narx= self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
                        order=self.data['order'], t_step=self.data['t_step'], lbx=self.data['lbx'],
-                            ubx=self.data['ubx'], device=device, set_seed=self.set_seed)
+                            ubx=self.data['ubx'], device=device)
 
         # pushing trainer settings
         self.cqr.setup_trainer(hidden_layers=hidden_layers, learning_rate=learning_rate, batch_size=batch_size,
@@ -593,7 +593,7 @@ class DataManager(plotter):
         # end
         return self.cqr_mpc
 
-    def run_simulation(self, system, iter, n_horizon, r, tightner,
+    def run_simulation(self, system, iter, n_horizon, r, tightner, rnd_samples,
                        confidence_cutoff, setpoint, max_search, store_gif=False):
         # init
         df = self.data['test']
@@ -610,11 +610,15 @@ class DataManager(plotter):
         simulator = system._get_simulator(model=model)
         estimator = do_mpc.estimator.StateFeedback(model= model)
 
+        # additional config for the cqr
+        self.cqr.set_config(rnd_samples=rnd_samples, confidence_cutoff=confidence_cutoff)
+
         # getting controller with surrogate model inside the mpc
         surrogate_model = self.narx_2_dompc()
         cqr_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r,
                                       cqr=self.cqr, tightner=tightner, confidence_cutoff=confidence_cutoff,
                                       max_search=max_search)
+
 
         # take initial guess from test data
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
