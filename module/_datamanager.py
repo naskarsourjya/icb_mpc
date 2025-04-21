@@ -10,6 +10,7 @@ import imageio
 from IPython.display import display, Image
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
 
 
 from ._graphics import plotter
@@ -665,7 +666,7 @@ class DataManager(plotter):
             x0 = estimator.make_step(y0)
 
             if store_gif:
-                all_plots.append(cqr_mpc.plot_trials(show_plot=False))
+                all_plots.append(cqr_mpc.plot_trials_matplotlib(show_plot=False))
 
         # storage
         self.simulation['simulator'] = simulator
@@ -707,12 +708,54 @@ class DataManager(plotter):
                 image = imageio.imread(img)
                 writer.append_data(image)
 
+        # Clean up temp files
+        for fname in image_files:
+            os.remove(fname)
+        os.rmdir(frame_dir)
+
         print(f"GIF saved as {file_name}")
 
         # display gif
         display(Image(filename=file_name))
 
         return  None
+
+    def show_gif_matplotlib(self, gif_name="plotly_animation_matplotlib.gif", gif_path="", temp_dir="matplotlib_frames", duration=0.5):
+        assert self.store_gif, "Create gif not enabled in run_simulation!"
+
+        # init
+        all_plots = self.all_plots
+        i = 0
+        filenames = []
+
+        # Directory to save images
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # generating images
+        for plots in tqdm(all_plots, desc="Storing plots"):
+            for matplots in plots:
+                fig, axes = matplots
+                filename = os.path.join(temp_dir, f"frame_{i:03d}.png")
+                fig.savefig(filename)
+                filenames.append(filename)
+                plt.close(fig)  # Close the figure to save memory
+                i += 1
+
+        # Read all files and create gif
+        images = [imageio.v2.imread(fname) for fname in tqdm(filenames, desc='Generating gif')]
+        imageio.mimsave(gif_name, images, duration=duration)
+
+        # Clean up temp files
+        for fname in filenames:
+            os.remove(fname)
+        os.rmdir(temp_dir)
+
+        print(f"GIF saved to {gif_path}")
+
+        # display gif
+        display(Image(filename=gif_name))
+
+        return None
 
 
     def check_simulator(self, system, iter):

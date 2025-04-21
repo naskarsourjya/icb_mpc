@@ -106,7 +106,7 @@ rewrite calculate surrogate error to calculate errors in matrix instead of make_
 
 # Week 11 (31/03/2025)
 
-There is translation problem when the pytorch model is converted to do_mpc model. SInce do_mpc is based on casadi which only supports float64, and we are using multiple datatypes in the pytorch, we are getting issues whrn the nn has large nodes or it is very deep.
+There is translation problem when the pytorch model is converted to do_mpc model. SInce do_mpc is based on casadi which only supports float64, and we are using multiple datatypes in the pytorch, we are getting issues when the nn has large nodes or it is very deep.
 
 # Week 12
 

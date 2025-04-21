@@ -2,6 +2,7 @@ import copy
 import dill
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
 
 class MPC_Brancher():
@@ -213,10 +214,10 @@ class MPC_Brancher():
             # storage
             if enable_plots:
                 all_branches.append(branches)
-                plots.append(self.cqr.plot_branch(t0=self.t0, show_plot=False))
+                plots.append(self.cqr.plot_branch_matplotlib(t0=self.t0, show_plot=False))
 
             # adjust bounds if necessary
-            adjust_flag = self._adjust_bounds(mpc=self.mpc, all_states=all_states,
+            adjust_flag = self._adjust_bounds(mpc=self.mpc, branches=branches,
                                               default_lbx = default_lbx, default_ubx=default_ubx)
 
             if adjust_flag == False:
@@ -264,7 +265,7 @@ class MPC_Brancher():
         return u0
 
 
-    def _adjust_bounds(self, mpc, all_states, default_lbx, default_ubx):
+    def _adjust_bounds(self, mpc, branches, default_lbx, default_ubx):
         # init
         adjust_flag = False
 
@@ -276,6 +277,8 @@ class MPC_Brancher():
         #        adjust_flag = True
         #        break
 
+        all_states = np.vstack(branches['states'])
+
         default_lbx_matrix = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]]*all_states.shape[0])
         default_ubx_matrix = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * all_states.shape[0])
 
@@ -285,35 +288,70 @@ class MPC_Brancher():
         # exit loop
         if adjust_flag == True:
 
-            # init
-            default_range_x = default_ubx_matrix - default_lbx_matrix
+            # calculation per alpha value
+            for i, states_n in enumerate(branches['states']):
 
-            # checking the protrusions above the upper boundary, if positive: boundary is crossed
-            upper_residue = all_states - default_ubx_matrix
+                # init
+                default_lbx_matrix_n = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
+                default_ubx_matrix_n = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
+                default_range_x_n = default_ubx_matrix_n - default_lbx_matrix_n
+                alpha_n = branches['alphas'][i]
 
-            # checking the protrusions below the lower boundary, if positive: boundary is crossed
-            lower_residue = - all_states + default_lbx_matrix
+                # checking the protrusions above the upper boundary, if positive: boundary is crossed
+                residue_upper = (states_n - default_ubx_matrix_n)/default_range_x_n
 
-            # replacing all negative values with zero
-            # since negative value signifies that boundary has not been crossed
-            upper_residue[upper_residue < 0] = 0
-            lower_residue[lower_residue < 0] = 0
+                # checking the protrusions below the lower boundary, if positive: boundary is crossed
+                residue_lower = (- states_n + default_lbx_matrix_n)/default_range_x_n
 
-            # deviation above the boundary, averaged over all the samples
-            upper_shift = np.mean(upper_residue, axis=0)
-            lower_shift = np.mean(lower_residue, axis=0)
+                # Replace values: 1 for zero or positive, 0 for negative
+                # if value is 1, then the boundary is violated, if value is 0, boundary not violated.
+                binary_upper = np.where(residue_upper >= 0, 1, 0)
+                binary_lower = np.where(residue_lower >= 0, 1, 0)
 
-            #upper_shift_factor = upper_shift / default_range_x
-            #lower_shift_factor = lower_shift / default_range_x
+                # replacing all states with zero, which have not crossed the boundary
+                residue_upper[residue_upper < 0] = 0
+                residue_lower[residue_lower < 0] = 0
 
+                # if boundary is  too far, i.e., the difference itself is more than the range of x,
+                # it is set at the range of the x
+                residue_upper[residue_upper > 1] = 1
+                residue_lower[residue_lower > 1] = 1
+
+                # calculating the probability of the states crossing the individual boundary
+                residue_prob_u = np.sum(binary_upper, axis=0)/states_n.shape[0]
+                residue_prob_l = np.sum(binary_lower, axis=0)/states_n.shape[0]
+
+                # probabilities scaled with the cqr alpha value
+                upper_prob = alpha_n * residue_prob_u
+                lower_prob = alpha_n * residue_prob_l
+                upper_prob_stacked = np.vstack([upper_prob] * states_n.shape[0])
+                lower_prob_stacked = np.vstack([lower_prob] * states_n.shape[0])
+
+                if i == 0:
+                    prob_scaled_states_u = upper_prob_stacked * residue_upper
+                    prob_scaled_states_l = lower_prob_stacked * residue_lower
+
+                else:
+                    prob_scaled_states_u = np.vstack([prob_scaled_states_u, upper_prob_stacked * residue_upper])
+                    prob_scaled_states_l = np.vstack([prob_scaled_states_l, lower_prob_stacked * residue_lower])
+
+                pass
+
+            # determining the mean of the deviations
+            prob_upper = np.mean(prob_scaled_states_u, axis=0)
+            prob_lower = np.mean(prob_scaled_states_l, axis=0)
+
+
+            # extracting current mpc bounds
             lbx = self.bounds_extractor(mpc=mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=mpc, bnd_type='upper', var_type='_x')
 
             range_x = ubx - lbx
             range_x = range_x[0:self.cqr.n_x, :]
 
-            adj_lower = self.tightner * lower_shift
-            adj_upper = self.tightner * upper_shift
+            # adjusting the bounds
+            adj_lower = self.tightner * prob_lower * range_x.reshape((-1,))
+            adj_upper = self.tightner * prob_upper * range_x.reshape((-1,))
 
             new_lbx = lbx[0:self.cqr.n_x, :] + adj_lower.reshape((-1, 1))
             new_ubx = ubx[0:self.cqr.n_x, :] - adj_upper.reshape((-1, 1))
@@ -400,3 +438,77 @@ class MPC_Brancher():
         else:
             return new_plots
 
+
+    def plot_trials_matplotlib(self, show_plot=True):
+        assert self.enable_plots, 'Plots storage not enabled! Set enable_plots=True in MPC_Brancher.make_step.'
+
+        # Initialize parameters
+        n_x = self.cqr.n_x
+        n_u = self.cqr.n_u
+        plots = self.plots  # Assuming this is a list of figures (not used directly here)
+        history = self.history
+        all_boundaries = self.all_boundaries
+
+        new_plots = []
+
+        for k in range(len(plots)):
+            branches = self.all_branches[k]
+            boundaries = all_boundaries[k]
+            lbx = boundaries['lbx'].reshape(-1, )
+            ubx = boundaries['ubx'].reshape(-1, )
+
+            branch_times = history['time'] + [num + history['time'][-1] for num in branches['time_stamps']]
+
+            fig, axes = plots[k]
+
+            # Loop through each state variable (n_x)
+            for i in range(n_x):
+                ax = axes[i]
+
+                # Simulation line (history of states)
+                ax.plot(history['time'], history['x0'][i, :], color='black', linestyle='solid',
+                        label='Simulation' if i == 0 else None)
+
+                # System bounds (upper and lower)
+                ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='grey', linestyle='solid',
+                        label='System Bounds' if i == 0 else None)
+                ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='grey', linestyle='solid')
+
+                # Optimized MPC bounds (upper and lower)
+                ax.plot(branch_times, [ubx[i]] * len(branch_times), color='orange', linestyle='dashed',
+                        label='MPC Upper Bound' if i == 0 else None)
+                ax.plot(branch_times, [lbx[i]] * len(branch_times), color='brown', linestyle='dashed',
+                        label='MPC Lower Bound' if i == 0 else None)
+
+                ax.set_ylabel(f'State {i + 1}')
+
+                if i == 0:
+                    ax.legend()
+
+            # Loop through each control variable (n_u)
+            for j in range(n_u):
+                ax = axes[n_x + j]
+
+                # Combine historical control inputs with the first value from branches
+                u_combined = np.hstack([history['u0'][j, :-1], branches['u0_traj'][j, 0]])
+
+                ax.plot(history['time'], u_combined, color='black', linestyle='solid')
+
+                ax.set_ylabel(f'Input {j + 1}')
+
+            # Set x-axis labels on all plots after looping through inputs and states.
+            for ax in axes:
+                ax.set_xlabel('Time [s]')
+
+            fig.suptitle("MPC Trial Plots", fontsize=16)
+
+            if show_plot:
+                fig.show()
+            else:
+                plt.close(fig)
+                new_plots.append((fig, axes))
+
+        if show_plot:
+            return None
+        else:
+            return new_plots

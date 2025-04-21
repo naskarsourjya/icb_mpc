@@ -136,7 +136,7 @@ class plotter():
         graphics.reset_axes()
         for ax_n in ax:
             ax_n.grid(True)
-        plt.show()
+        fig.show()
 
         # end
         return None

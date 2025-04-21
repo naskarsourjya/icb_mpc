@@ -5,6 +5,7 @@ from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+import matplotlib.pyplot as plt
 
 from ._neuralnetwork import Regressor, MergedModel
 
@@ -887,7 +888,7 @@ class cqr_narx():
         order = self.order
         state_n = self.states.reshape((1, -1))
         input_n = self.inputs.reshape((1, -1))
-        alpha_branch = [1-self.alpha]
+        alpha_branch = [1]
         time_branch = [0.0]
         steps = u0_traj.shape[0]
         states_branch = [self.states[0, :].reshape(1, -1)]
@@ -1045,6 +1046,73 @@ class cqr_narx():
         else:
             return fig
 
+    def plot_branch_matplotlib(self, t0=0.0, show_plot=True):
+        n_x = self.n_x
+        n_u = self.n_u
+        time_stamp_states = [num + t0 for num in self.branches['time_stamps']]
+        states = self.branches['states']
+        alphas = self.branches['alphas']
+        u0_traj = self.branches['u0_traj']
+        time_stamp_inputs = np.arange(t0, t0 + (self.t_step * u0_traj.shape[0]), self.t_step)[0:u0_traj.shape[0]]
+
+        # Create subplots
+        fig, axes = plt.subplots(n_x + n_u, 1, figsize=(10, 5 * (n_x + n_u)), sharex=True)
+
+        if n_x + n_u == 1:  # If there's only one subplot, wrap axes in a list for consistency
+            axes = [axes]
+
+        # Loop through each state
+        for i in range(n_x):
+            ax = axes[i]
+            mean_prediction = []
+
+            for j, t in enumerate(time_stamp_states):
+                if j < len(time_stamp_states) - 1:
+                    # Add shaded region for confidence
+                    ax.fill_between(
+                        [time_stamp_states[j], time_stamp_states[j + 1]],
+                        [min(states[j][:, i]), min(states[j + 1][:, i])],
+                        [max(states[j][:, i]), max(states[j + 1][:, i])],
+                        color='yellow',
+                        alpha=alphas[j],
+                        label=f'Confidence={alphas[j]}' if j == 0 else None,
+                    )
+
+                # Scatter plot of branches
+                ax.scatter([t] * states[j][:, i].shape[0], states[j][:, i], color='pink', s=2,
+                           label='Branches' if i == 0 and j == 0 else None)
+
+                # Extracting mean prediction
+                mean_prediction.append(states[j][0, i])
+
+            # Line plot of mean prediction
+            ax.plot(time_stamp_states, mean_prediction,
+                    linestyle='dashed', color='red', label='Nominal Projection' if i == 0 else None)
+
+            ax.set_ylabel(f'State {i + 1}')
+            ax.legend()
+
+        for j in range(n_u):
+            ax = axes[n_x + j]
+
+            # Line plot of input trajectory
+            ax.plot(time_stamp_inputs, u0_traj[:, j], linestyle='dashed', color='red', label='Input Trajectory')
+
+            ax.set_ylabel(f'Inputs {j + 1}')
+            ax.legend()
+
+        # Set x-axis labels on all plots after looping through inputs and states.
+        for ax in axes:
+            ax.set_xlabel('Times [s]')
+
+        fig.suptitle("CQR State Branch Plots", fontsize=16)
+
+        # Show or return the plot based on `show_plot`
+        if show_plot:
+            fig.show()
+        else:
+            plt.close(fig)
+            return fig, axes
 
 
 
