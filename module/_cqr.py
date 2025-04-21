@@ -1075,7 +1075,7 @@ class cqr_narx():
                         [max(states[j][:, i]), max(states[j + 1][:, i])],
                         color='yellow',
                         alpha=alphas[j],
-                        label=f'Confidence={alphas[j]}' if j == 0 else None,
+                        label=f'Confidence' if j == 0 and i==0 else None,
                     )
 
                 # Scatter plot of branches
@@ -1090,20 +1090,21 @@ class cqr_narx():
                     linestyle='dashed', color='red', label='Nominal Projection' if i == 0 else None)
 
             ax.set_ylabel(f'State {i + 1}')
-            ax.legend()
+            #ax.legend()
 
         for j in range(n_u):
             ax = axes[n_x + j]
 
             # Line plot of input trajectory
-            ax.plot(time_stamp_inputs, u0_traj[:, j], linestyle='dashed', color='red', label='Input Trajectory')
+            ax.plot(time_stamp_inputs, u0_traj[:, j], linestyle='dashed', color='red', label='MPC trajectory')
 
             ax.set_ylabel(f'Inputs {j + 1}')
-            ax.legend()
+            #ax.legend()
 
         # Set x-axis labels on all plots after looping through inputs and states.
         for ax in axes:
             ax.set_xlabel('Times [s]')
+            ax.grid()
 
         fig.suptitle("CQR State Branch Plots", fontsize=16)
 

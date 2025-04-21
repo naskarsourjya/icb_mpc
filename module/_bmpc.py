@@ -264,8 +264,105 @@ class MPC_Brancher():
         # end
         return u0
 
-
     def _adjust_bounds(self, mpc, branches, default_lbx, default_ubx):
+        # init
+        adjust_flag = False
+
+        # checking if all the predicted states saty inside the boundary
+        # for i in range(all_states.shape[0]):
+        #    current_state = all_states[i, :].reshape((1, -1))
+        #    if (np.any(current_state < lbx.reshape((-1,))[0: self.cqr.n_x]) or
+        #            np.any(current_state > ubx.reshape((-1,))[0: self.cqr.n_x])):
+        #        adjust_flag = True
+        #        break
+
+        all_states = np.vstack(branches['states'])
+
+        default_lbx_matrix = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]] * all_states.shape[0])
+        default_ubx_matrix = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * all_states.shape[0])
+
+        if (np.any(all_states < default_lbx_matrix) or np.any(all_states > default_ubx_matrix)):
+            adjust_flag = True
+
+        # exit loop
+        if adjust_flag == True:
+
+            # calculation per alpha value
+            for i, states_n in enumerate(branches['states']):
+
+                # init
+                default_lbx_matrix_n = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
+                default_ubx_matrix_n = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
+                default_range_x_n = default_ubx_matrix_n - default_lbx_matrix_n
+                alpha_n = branches['alphas'][i]
+
+                # checking the protrusions above the upper boundary, if positive: boundary is crossed
+                residue_upper = (states_n - default_ubx_matrix_n) / default_range_x_n
+
+                # checking the protrusions below the lower boundary, if positive: boundary is crossed
+                residue_lower = (- states_n + default_lbx_matrix_n) / default_range_x_n
+
+                # Replace values: 1 for zero or positive, 0 for negative
+                # if value is 1, then the boundary is violated, if value is 0, boundary not violated.
+                binary_upper = np.where(residue_upper >= 0, 1, 0)
+                binary_lower = np.where(residue_lower >= 0, 1, 0)
+
+                # replacing all states with zero, which have not crossed the boundary
+                residue_upper[residue_upper < 0] = 0
+                residue_lower[residue_lower < 0] = 0
+
+                # if boundary is  too far, i.e., the difference itself is more than the range of x,
+                # it is set at the range of the x
+                residue_upper[residue_upper > 1] = 1
+                residue_lower[residue_lower > 1] = 1
+
+                # calculating the probability of the states crossing the individual boundary
+                residue_prob_u = np.sum(binary_upper, axis=0) / states_n.shape[0]
+                residue_prob_l = np.sum(binary_lower, axis=0) / states_n.shape[0]
+
+                # probabilities scaled with the cqr alpha value
+                upper_prob = alpha_n * residue_prob_u
+                lower_prob = alpha_n * residue_prob_l
+                upper_prob_stacked = np.vstack([upper_prob] * states_n.shape[0])
+                lower_prob_stacked = np.vstack([lower_prob] * states_n.shape[0])
+
+                if i == 0:
+                    prob_scaled_states_u = upper_prob_stacked * residue_upper
+                    prob_scaled_states_l = lower_prob_stacked * residue_lower
+
+                else:
+                    prob_scaled_states_u = np.vstack([prob_scaled_states_u, upper_prob_stacked * residue_upper])
+                    prob_scaled_states_l = np.vstack([prob_scaled_states_l, lower_prob_stacked * residue_lower])
+
+            # determining the mean of the deviations
+            prob_upper = np.mean(prob_scaled_states_u, axis=0)
+            prob_lower = np.mean(prob_scaled_states_l, axis=0)
+
+            # extracting current mpc bounds
+            lbx = self.bounds_extractor(mpc=mpc, bnd_type='lower', var_type='_x')
+            ubx = self.bounds_extractor(mpc=mpc, bnd_type='upper', var_type='_x')
+
+            range_x = ubx - lbx
+            range_x = range_x[0:self.cqr.n_x, :]
+
+            # adjusting the bounds
+            adj_lower = self.tightner * prob_lower * range_x.reshape((-1,))
+            adj_upper = self.tightner * prob_upper * range_x.reshape((-1,))
+
+            new_lbx = lbx[0:self.cqr.n_x, :] + adj_lower.reshape((-1, 1))
+            new_ubx = ubx[0:self.cqr.n_x, :] - adj_upper.reshape((-1, 1))
+
+            # self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
+            # self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx
+            self.bounds_setter(mpc=mpc, bnd_type='upper', var_type='_x', bnd_val=new_ubx)
+            self.bounds_setter(mpc=mpc, bnd_type='lower', var_type='_x', bnd_val=new_lbx)
+
+            self.mpc.reset_history()
+
+        return adjust_flag
+
+
+    def _adjust_bounds_v(self, mpc, branches, default_lbx, default_ubx):
         # init
         adjust_flag = False
 
@@ -288,54 +385,55 @@ class MPC_Brancher():
         # exit loop
         if adjust_flag == True:
 
+            # init
+            alpha_list = []
+
             # calculation per alpha value
-            for i, states_n in enumerate(branches['states']):
+            for i, states_nth in enumerate(branches['states']):
+                alpha_nth = [branches['alphas'][i]] * states_nth.shape[0]
 
-                # init
-                default_lbx_matrix_n = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
-                default_ubx_matrix_n = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
-                default_range_x_n = default_ubx_matrix_n - default_lbx_matrix_n
-                alpha_n = branches['alphas'][i]
+                alpha_list = alpha_list + alpha_nth
 
-                # checking the protrusions above the upper boundary, if positive: boundary is crossed
-                residue_upper = (states_n - default_ubx_matrix_n)/default_range_x_n
+            # stacked alpha
+            alpha_stacked = np.stack(alpha_list)
 
-                # checking the protrusions below the lower boundary, if positive: boundary is crossed
-                residue_lower = (- states_n + default_lbx_matrix_n)/default_range_x_n
+            # init
+            default_range_x = default_ubx_matrix - default_lbx_matrix
 
-                # Replace values: 1 for zero or positive, 0 for negative
-                # if value is 1, then the boundary is violated, if value is 0, boundary not violated.
-                binary_upper = np.where(residue_upper >= 0, 1, 0)
-                binary_lower = np.where(residue_lower >= 0, 1, 0)
 
-                # replacing all states with zero, which have not crossed the boundary
-                residue_upper[residue_upper < 0] = 0
-                residue_lower[residue_lower < 0] = 0
+            # checking the protrusions above the upper boundary, if positive: boundary is crossed
+            residue_upper = (all_states - default_ubx_matrix) / default_range_x
 
-                # if boundary is  too far, i.e., the difference itself is more than the range of x,
-                # it is set at the range of the x
-                residue_upper[residue_upper > 1] = 1
-                residue_lower[residue_lower > 1] = 1
+            # checking the protrusions below the lower boundary, if positive: boundary is crossed
+            residue_lower = (- all_states + default_lbx_matrix) / default_range_x
 
-                # calculating the probability of the states crossing the individual boundary
-                residue_prob_u = np.sum(binary_upper, axis=0)/states_n.shape[0]
-                residue_prob_l = np.sum(binary_lower, axis=0)/states_n.shape[0]
+            # Replace values: 1 for zero or positive, 0 for negative
+            # if value is 1, then the boundary is violated, if value is 0, boundary not violated.
+            binary_upper = np.where(residue_upper >= 0, 1, 0)
+            binary_lower = np.where(residue_lower >= 0, 1, 0)
 
-                # probabilities scaled with the cqr alpha value
-                upper_prob = alpha_n * residue_prob_u
-                lower_prob = alpha_n * residue_prob_l
-                upper_prob_stacked = np.vstack([upper_prob] * states_n.shape[0])
-                lower_prob_stacked = np.vstack([lower_prob] * states_n.shape[0])
+            # replacing all states with zero, which have not crossed the boundary
+            residue_upper[residue_upper < 0] = 0
+            residue_lower[residue_lower < 0] = 0
 
-                if i == 0:
-                    prob_scaled_states_u = upper_prob_stacked * residue_upper
-                    prob_scaled_states_l = lower_prob_stacked * residue_lower
+            # if boundary is  too far, i.e., the difference itself is more than the range of x,
+            # it is set at the range of the x
+            residue_upper[residue_upper > 1] = 1
+            residue_lower[residue_lower > 1] = 1
 
-                else:
-                    prob_scaled_states_u = np.vstack([prob_scaled_states_u, upper_prob_stacked * residue_upper])
-                    prob_scaled_states_l = np.vstack([prob_scaled_states_l, lower_prob_stacked * residue_lower])
+            # calculating the probability of the states crossing the individual boundary
+            residue_prob_u = np.sum(binary_upper, axis=0) / all_states.shape[0]
+            residue_prob_l = np.sum(binary_lower, axis=0) / all_states.shape[0]
 
-                pass
+            # probabilities scaled with the cqr alpha value
+            upper_prob = alpha_stacked * residue_prob_u
+            lower_prob = alpha_stacked * residue_prob_l
+            upper_prob_stacked = np.vstack([upper_prob] * all_states.shape[0])
+            lower_prob_stacked = np.vstack([lower_prob] * all_states.shape[0])
+
+            # all scaled deviations
+            prob_scaled_states_u = upper_prob_stacked * residue_upper
+            prob_scaled_states_l = lower_prob_stacked * residue_lower
 
             # determining the mean of the deviations
             prob_upper = np.mean(prob_scaled_states_u, axis=0)
@@ -480,10 +578,7 @@ class MPC_Brancher():
                 ax.plot(branch_times, [lbx[i]] * len(branch_times), color='brown', linestyle='dashed',
                         label='MPC Lower Bound' if i == 0 else None)
 
-                ax.set_ylabel(f'State {i + 1}')
-
-                if i == 0:
-                    ax.legend()
+                #ax.set_ylabel(f'State {i + 1}')
 
             # Loop through each control variable (n_u)
             for j in range(n_u):
@@ -494,13 +589,14 @@ class MPC_Brancher():
 
                 ax.plot(history['time'], u_combined, color='black', linestyle='solid')
 
-                ax.set_ylabel(f'Input {j + 1}')
+                #ax.set_ylabel(f'Input {j + 1}')
 
             # Set x-axis labels on all plots after looping through inputs and states.
-            for ax in axes:
-                ax.set_xlabel('Time [s]')
+            #for ax in axes:
+            #    ax.set_xlabel('Time [s]')
 
             fig.suptitle("MPC Trial Plots", fontsize=16)
+            fig.legend(loc='upper right')
 
             if show_plot:
                 fig.show()
