@@ -6,7 +6,13 @@ import matplotlib.pyplot as plt
 
 
 class MPC_Brancher():
-    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search):
+    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search, verbose=True):
+
+        # sanity checks
+        assert tightner > 0, "Tightner must be greater than 0."
+        assert confidence_cutoff > 0 and confidence_cutoff <=1, "Confidence cutoff must be between 0 and 1."
+        assert max_search >= 1 and isinstance(max_search, int), "Max search must be an integer greater than or equal to 1."
+        
         # storage
         #super(mpc_narx, self).__init__(model=model)     # `self` is the do_mpc MPC Controller
         self.mpc = mpc
@@ -14,6 +20,7 @@ class MPC_Brancher():
         self.tightner = tightner
         self.confidence_cutoff = confidence_cutoff
         self.max_search = max_search
+        self.verbose = verbose
 
         # setup runtime
         self.setup()
@@ -22,7 +29,6 @@ class MPC_Brancher():
     def setup(self):
         self._narxstates = None
         self._narxinputs = None
-        self.t0 = 0.0
         self.history = None
         return None
 
@@ -108,6 +114,8 @@ class MPC_Brancher():
 
         # resetting history
         self.history = None
+        self.t0 = 0.0
+        self.frame_number = 1
 
         # end
         return None
@@ -178,7 +186,13 @@ class MPC_Brancher():
 
         for i in range(self.max_search):
 
-            # reinit to old state
+            # debug printouts
+            if self.verbose:
+                print(f"\n\n--------- Iterative Boundary Nominal Model Predictive Control ---------")
+                print(f"Frame Number: {self.frame_number}")
+                print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}\n\n")
+
+            # re-init to old state
             prev_ic = self._generate_initial_guess(states=prev_state, inputs=prev_input)
 
             # passing initial cond
@@ -208,9 +222,6 @@ class MPC_Brancher():
             # make branch prediction
             branches = self.cqr.make_branch(u0_traj=u_traj_numpy)
 
-            # reading the results
-            all_states = np.vstack(branches['states'])
-
             # storage
             if enable_plots:
                 all_branches.append(branches)
@@ -219,6 +230,21 @@ class MPC_Brancher():
             # adjust bounds if necessary
             adjust_flag = self._adjust_bounds(mpc=self.mpc, branches=branches,
                                               default_lbx = default_lbx, default_ubx=default_ubx)
+            
+            # debug printouts
+            if self.verbose:
+                print(f"\n\nBoundary adjusted: {adjust_flag}")
+                print(f"State Upper Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')}")
+                print(f"State Lower Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')}")
+                print(f"Input Upper Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')}")
+                print(f"Input Lower Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')}")
+                print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}")
+                print(f"Calculated input: {u0}")
+                print(f"Calculated next state: {branches['states'][1][0,:]}")
+                print(f"--------- End ---------\n\n")
+            
+            # increment frame number
+            self.frame_number += 1
 
             if adjust_flag == False:
                 break
@@ -244,16 +270,13 @@ class MPC_Brancher():
             history['x0'] = x0
             history['time'] = [0.0]
             history['u0'] = u0
-
             self.history = history
 
         else:
             history = self.history
-
             history['x0'] = np.hstack([history['x0'], x0])
             history['time'].append(history['time'][-1] + self.mpc.settings.t_step)
             history['u0'] = np.hstack([history['u0'], u0])
-
             self.history = history
 
         if enable_plots:
@@ -352,11 +375,14 @@ class MPC_Brancher():
             new_lbx = lbx[0:self.cqr.n_x, :] + adj_lower.reshape((-1, 1))
             new_ubx = ubx[0:self.cqr.n_x, :] - adj_upper.reshape((-1, 1))
 
-            # self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
-            # self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx
+            # sanity check
+            assert np.all(new_lbx < new_ubx), "Lower bound has to be is greater than upper bound! Reduce 'tightner' to ensure this does not occur."
+
+            # readjusting boundaries
             self.bounds_setter(mpc=mpc, bnd_type='upper', var_type='_x', bnd_val=new_ubx)
             self.bounds_setter(mpc=mpc, bnd_type='lower', var_type='_x', bnd_val=new_lbx)
 
+            # resetting history
             self.mpc.reset_history()
 
         return adjust_flag
@@ -400,7 +426,6 @@ class MPC_Brancher():
             # init
             default_range_x = default_ubx_matrix - default_lbx_matrix
 
-
             # checking the protrusions above the upper boundary, if positive: boundary is crossed
             residue_upper = (all_states - default_ubx_matrix) / default_range_x
 
@@ -439,7 +464,6 @@ class MPC_Brancher():
             prob_upper = np.mean(prob_scaled_states_u, axis=0)
             prob_lower = np.mean(prob_scaled_states_l, axis=0)
 
-
             # extracting current mpc bounds
             lbx = self.bounds_extractor(mpc=mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=mpc, bnd_type='upper', var_type='_x')
@@ -453,6 +477,8 @@ class MPC_Brancher():
 
             new_lbx = lbx[0:self.cqr.n_x, :] + adj_lower.reshape((-1, 1))
             new_ubx = ubx[0:self.cqr.n_x, :] - adj_upper.reshape((-1, 1))
+
+            assert np.all(new_lbx < new_ubx), "Lower bound has to be is greater than upper bound! Reduce self.tightner to ensure this does not occur."
 
             # self.mpc.bounds['upper', '_x', 'system_state'] = new_ubx
             # self.mpc.bounds['lower', '_x', 'system_state'] = new_lbx

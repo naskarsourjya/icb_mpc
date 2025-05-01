@@ -269,6 +269,11 @@ class Surrogate():
 
         # init time
         self.t0 = 0.0
+        history = {}
+        history['x0'] = self.states[0, :].reshape((1, -1))
+        history['time'] = np.array([[self.t0]])
+        history['u0'] = np.full((1, self.n_u), np.nan)
+        self.history = history
 
         # flag update
         self.flags.update({
@@ -339,25 +344,15 @@ class Surrogate():
         #    self._generate_initial_guess()
 
         # storing simulation history
-        if self.history == None:
-            history = {}
-            history['x0'] = x0.reshape((1, -1))
-            history['time'] = np.array([[self.t0]])
-            history['u0'] = u0.reshape((1, -1))
-
-            self.history = history
-
-        else:
-            history = self.history
-
-            history['x0'] = np.vstack([history['x0'], x0.reshape((1, -1))])
-            history['time'] = np.vstack([history['time'], self.t0])
-            history['u0'] = np.vstack([history['u0'], u0.reshape((1, -1))])
-
-            self.history = history
 
         # step up time
         self.t0 = self.t0 + self.t_step
+
+        history = self.history
+        history['x0'] = np.vstack([history['x0'], x0.reshape((1, -1))])
+        history['time'] = np.vstack([history['time'], self.t0])
+        history['u0'] = np.vstack([history['u0'], u0.reshape((1, -1))])
+        self.history = history
 
         return x0
 

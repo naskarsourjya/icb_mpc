@@ -258,9 +258,9 @@ class DataManager(plotter):
         u_names = [f'input_{i + 1}' for i in range(self.data['n_u'])]
 
         # Add lagged columns
-        for i in range(order+1):
+        for i in range(-1, order):
             for col in x_names:
-                col_name = f"{col}_lag_{i}"
+                col_name = f"{col}_lag_{i+1}"
                 df_new[col_name] = df_new[col].shift(i)
 
         # Add lagged columns
@@ -656,8 +656,6 @@ class DataManager(plotter):
         simulator.set_initial_guess()
 
         # run the main loop
-        #for _ in tqdm(range(iter), desc=f'Simulating system'):
-        #for _ in tqdm(range(iter), desc='Simulating'):
         for _ in range(iter):
 
             u0 = cqr_mpc.make_step(x0, enable_plots = True)

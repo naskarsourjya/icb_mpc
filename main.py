@@ -8,8 +8,8 @@ dm = DataManager(set_seed = 0)
 
 # pipeline to generate data and store
 #su.random_state_sampler(system = spring_system, n_samples=50)
-dm.random_input_sampler(system = spring_system, n_samples=1000)
-dm.data_splitter(order=2)
+dm.random_input_sampler(system = spring_system, n_samples=10000)
+dm.data_splitter(order=3)
 #dm.visualize2d_data()
 #ann.store_raw_data(filename='data\spring_random_1000.pkl')
 
@@ -55,10 +55,10 @@ dm.train_individual_qr(alpha=0.1, hidden_layers=[2], batch_size=1000,
 #dm.plot_simulation()
 #dm.show_gif()
 
-#dm.check_simulator(system=spring_system, iter= 50)
-dm.run_simulation(system=spring_system, iter=10, n_horizon=10, r=0.01, store_gif=True, tightner=0.005,
-                  confidence_cutoff=0.5, rnd_samples=7, setpoint=0.009, max_search=5)
+dm.check_simulator(system=spring_system, iter= 50)
+#dm.run_simulation(system=spring_system, iter=10, n_horizon=10, r=0.01, tightner=1,
+#                  confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5, store_gif=True)
 #dm.plot_simulation()
-dm.show_gif_matplotlib()
+#dm.show_gif_matplotlib()
 
 

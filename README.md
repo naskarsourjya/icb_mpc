@@ -165,3 +165,12 @@ Look up soruce no 12 from reghu paper
 4. change_probability of random_input_sampler
 5. input penalty (r) for random_state_sampler
 6. n_horizon for random_state_sampler
+
+# pressentation
+introcude the problem with bad case study
+introduce the case study, explaing the spring damper system very well
+intorduce approach to deal with bad surrogate models and introduce the tuning knobs, maybe a block diagram
+
+compare many models, hyperparameters
+iba_mpc with poor model and improvement
+next steps, impelement parallelisation, give runtime numbers

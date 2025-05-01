@@ -50,7 +50,9 @@ class cqr_narx():
         #end
 
 
-    def set_config(self, rnd_samples, confidence_cutoff):
+    def set_config(self, rnd_samples=7, confidence_cutoff=0.5):
+        assert isinstance(rnd_samples, int) and rnd_samples>=0, "Only positive integers permissible."
+        assert confidence_cutoff>0 and confidence_cutoff<=1, " Only positive fraction less than equal to 1 permissible."
         self.rnd_samples = rnd_samples
         self.confidence_cutoff = confidence_cutoff
         return None
@@ -141,7 +143,7 @@ class cqr_narx():
         return None
 
 
-    def setup_plot(self, height_px=300, width_px=1800):
+    def setup_plot(self, height_px=3, width_px=18):
 
         self.height_px = height_px
         self.width_px = width_px
@@ -292,8 +294,6 @@ class cqr_narx():
 
     def surrogate_error(self, narx_input, narx_output):
 
-
-
         # setting default device
         self._set_device(torch_device=self.narx.torch_device)
 
@@ -416,6 +416,15 @@ class cqr_narx():
         # init time
         self.t0 = 0.0
 
+        # init storage
+        history = {}
+        history['x0_cqr'] = self.states[0, :].reshape((1, -1))
+        history['x0_cqr_high'] = np.full((1, self.n_x), np.nan)
+        history['x0_cqr_low'] = np.full((1, self.n_x), np.nan)
+        history['time'] = np.array([[self.t0]])
+        history['u0'] = np.full((1, self.n_u), np.nan)
+        self.history = history
+
         # end
         return None
 
@@ -474,29 +483,17 @@ class cqr_narx():
             self.states = new_states
             self._set_initial_guess()
 
+        # stepping up time
+        self.t0 = self.t0 + self.t_step
+
         # storing simulation history
-
-
-        if self.history==None:
-            history = {}
-            history['x0_cqr'] =x0
-            history['x0_cqr_high'] = x0_cqr_high
-            history['x0_cqr_low'] = x0_cqr_low
-            history['time'] = np.array([[self.t0]])
-            history['u0'] = u0
-
-            self.history = history
-
-        else:
-            history = self.history
-
-            history['x0_cqr'] = np.vstack([history['x0_cqr'], x0])
-            history['x0_cqr_high'] = np.vstack([history['x0_cqr_high'], x0_cqr_high])
-            history['x0_cqr_low'] = np.vstack([history['x0_cqr_low'], x0_cqr_low])
-            history['time'] = np.vstack([history['time'], self.t0])
-            history['u0'] = np.vstack([history['u0'], u0])
-
-            self.history = history
+        history = self.history
+        history['x0_cqr'] = np.vstack([history['x0_cqr'], x0])
+        history['x0_cqr_high'] = np.vstack([history['x0_cqr_high'], x0_cqr_high])
+        history['x0_cqr_low'] = np.vstack([history['x0_cqr_low'], x0_cqr_low])
+        history['time'] = np.vstack([history['time'], self.t0])
+        history['u0'] = np.vstack([history['u0'], u0])
+        self.history = history
 
         # logged val
         if self.flags['debug']:
@@ -513,8 +510,7 @@ class cqr_narx():
                 log['time'] = np.vstack([log['time'], self.t0])
                 self.log = log
 
-        # stepping up time
-        self.t0 = self.t0 + self.t_step
+
 
         # return predictions
         return x0, x0_cqr_high, x0_cqr_low
@@ -604,7 +600,7 @@ class cqr_narx():
 
             # updating layout
             fig.update_layout(title_text='Individual CQR Training History',
-                              height=self.height_px * n_q, width=self.width_px)
+                              height=self.height_px * 100 * n_q, width=self.width_px * 100)
 
             # making plots
             for i, quantile in enumerate(quantiles):
@@ -715,7 +711,7 @@ class cqr_narx():
         #fig.suptitle('QR Error plots')
 
         fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="QR Error Plots",
+        fig.update_layout(height=self.height_px * 100 * n_x, width=self.width_px * 100, title_text="QR Error Plots",
                           showlegend=True)
 
         # sorting with timestamps
@@ -803,7 +799,7 @@ class cqr_narx():
 
         # Create subplots
         fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="CQR State Plots",
+        fig.update_layout(height=self.height_px * 100 * n_x, width=self.width_px * 100, title_text="CQR State Plots",
                           showlegend=True)
 
         # Loop through each state
@@ -983,7 +979,7 @@ class cqr_narx():
         # Create subplots
 
         fig = make_subplots(rows=n_x+n_u, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * (n_x+n_u), width=self.width_px, title_text="CQR State Branch Plots",
+        fig.update_layout(height=self.height_px * 100 * (n_x+n_u), width=self.width_px * 100, title_text="CQR State Branch Plots",
                               showlegend=True)
 
         # Loop through each state
@@ -1056,7 +1052,7 @@ class cqr_narx():
         time_stamp_inputs = np.arange(t0, t0 + (self.t_step * u0_traj.shape[0]), self.t_step)[0:u0_traj.shape[0]]
 
         # Create subplots
-        fig, axes = plt.subplots(n_x + n_u, 1, figsize=(10, 5 * (n_x + n_u)), sharex=True)
+        fig, axes = plt.subplots(n_x + n_u, 1, figsize=(self.width_px, self.height_px * (n_x + n_u)), sharex=True)
 
         if n_x + n_u == 1:  # If there's only one subplot, wrap axes in a list for consistency
             axes = [axes]
@@ -1114,24 +1110,4 @@ class cqr_narx():
         else:
             plt.close(fig)
             return fig, axes
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
