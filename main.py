@@ -21,7 +21,8 @@ dm.data_splitter(order=3)
 #          learning_rate=0.1, epochs= 100)
 dm.narx_trainer(hidden_layers=[2], batch_size=1000,
           learning_rate=0.1, epochs= 1000, scheduler_flag=True, device=default_device)
-#su.plot_narx_training_history()
+dm.narx.plot_narx_training_history_plotly()
+dm.narx.model
 #ann.save_narx(filename='data\\narx10_10_s1000_o1.pkl')
 
 #ann.load_narx(filename='data\\narx10_10_s1000_o1.pkl')
@@ -40,8 +41,9 @@ dm.narx_trainer(hidden_layers=[2], batch_size=1000,
 
 dm.train_individual_qr(alpha=0.1, hidden_layers=[2], batch_size=1000,
              lr_threshold=1e-7, epochs=1000, scheduler_flag=True, device=default_device)
+
 #su.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320)
-#su.cqr.plot_qr_training_history_plotly()
+dm.cqr.plot_qr_training_history()
 #dm.cqr_plot_qr_error()
 #dm.plot_cqr_error_plotly()
 #su.cqr_set_initial_guess(states=np.array([[0.1, 0.2, 0.3],
@@ -56,8 +58,8 @@ dm.train_individual_qr(alpha=0.1, hidden_layers=[2], batch_size=1000,
 #dm.show_gif()
 
 dm.check_simulator(system=spring_system, iter= 50)
-#dm.run_simulation(system=spring_system, iter=10, n_horizon=10, r=0.01, tightner=1,
-#                  confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5, store_gif=True)
+dm.run_simulation(system=spring_system, iter=10, n_horizon=10, r=0.01, tightner=1,
+                  confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5, store_gif=True)
 #dm.plot_simulation()
 #dm.show_gif_matplotlib()
 

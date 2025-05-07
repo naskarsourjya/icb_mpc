@@ -95,6 +95,9 @@ class Surrogate():
 
         # setting up rhs
         rhs_list = []
+
+        if verbose:
+            print(f"\n\n-------- Pytorch NARX Model -> do-mpc model --------\n")
         for var_name in d_state_list:
 
             # init
@@ -131,6 +134,9 @@ class Surrogate():
                 model.set_rhs(var_name, rhs_n)
                 if verbose:
                     print(f"{var_name} <<--- {rhs_n}")
+
+        if verbose:
+            print(f"\n-------- Conversion Complete. --------\n\n")
 
         # setting rhs
         #model.set_rhs(ref_x, ref_u)

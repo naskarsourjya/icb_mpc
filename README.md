@@ -96,45 +96,62 @@ plot the x_taj form the mpc for verification
 
 # Week 8 (10/03/2025)
 
-## done
+Scale input data (standard scaling or min max scaling) before training. Done.
 
-Scale data (standard scaling or min max scaling) before training.
+add mps support. Done.
 
-add mps support
-
-rewrite calculate surrogate error to calculate errors in matrix instead of make_step
+rewrite calculate surrogate error to calculate errors in matrix instead of make_step. Done.
 
 # Week 11 (31/03/2025)
 
 There is translation problem when the pytorch model is converted to do_mpc model. SInce do_mpc is based on casadi which only supports float64, and we are using multiple datatypes in the pytorch, we are getting issues when the nn has large nodes or it is very deep.
 
-# Week 12
+Tune system constants to make it fast. k, c and m needs to be tuned.
 
-Ensure when confidence = 1, cqr does not branch out and algo is equivalent to nominal mpc. Done.
-
-Reduce constraints only for states which are violated. Done.
-
-Discuss mpc cloning problem (tvp initialisation issue): Sol: reinit mpc in every make step. Have a new stepoint state instead of tvp. Done
-
-# Week 13
-
-adding random points in between (monte carlo style)
-
-If the bounds are too outside, the lbx may go above ubx. Should we have an upper limit for the adjustment factor?
-I am thinking about multiplying probability values with the states, because generally the states with the lower probability values are the ones which go further away from the boundary.
-
-Collect data nmpc vs robust mpc. Hyperparameter tuning.
-
-## todo
-
-Increase the f_ext cost term to 10^3 and then maybe try to reduce if mpc does nothing.
+# Week 12 (07/04/2025)
 
 mpc.reset_history is causing problems, find a workaround
 
 Simulate the real system and the surrogate and the cqr, compare all three against each other
 (results are out and we are cooked)
 
-Tune system constants to make it fast. k, c and m needs to be tuned.
+# Week 13 (14/04/2025)
+
+Ensure when confidence = 1, cqr does not branch out and algo is equivalent to nominal mpc. Done.
+
+Reduce constraints only for states which are violated. Done.
+
+Discuss mpc cloning problem (tvp initialisation issue): Sol: re-init mpc in every make step. Have a new set-point state instead of tvp. Done
+
+# Week 14 (21/04/2025)
+
+adding random points in between (monte carlo style). Done.
+
+If the bounds are too outside, the lbx may go above ubx. Should we have an upper limit for the adjustment factor? Fixed. We are throwing out an assertion error stating that the tightner might need some reduction.
+
+I am thinking about multiplying probability values with the states, because generally the states with the lower probability values are the ones which go further away from the boundary. Done.
+
+# Week 15 (30/04/2025)
+
+Issue: The surrogate model and the real model simulation profiles do not match, not even remotely. Fixed. Issue with the NARXing of the data.
+
+# Week 16 (07/05/2025)
+
+Collect data nmpc vs robust mpc. Hyperparameter tuning.
+
+Make midterm ppt.
+
+Check trial input timestamps and shape, should connect with the previous input.
+
+rewrite this, all lag values should be -1:
+
+state_1_lag_1 <<--- @1=((state_1_lag_1--0.000122589)/0.00352367), @2=((state_2_lag_1--0.000468091)/0.0228845), @3=((state_1_lag_2--9.18993e-05)/0.00353787), @4=((state_2_lag_2-7.97144e-05)/0.0226143), @5=((input_1_lag_0--0.00115011)/0.0581787), @6=((input_1_lag_1--0.0021914)/0.0580589), @7=(((((((0.0421667*@1)+(0.0105288*@2))+(0.0642783*@3))+(0.0207141*@4))+(-0.129506*@5))+(0.041167*@6))+-0.00440907), @8=(((((((-0.0127768*@1)+(0.0332566*@2))+(-0.00804659*@3))+(-0.00634837*@4))+(0.156069*@5))+(-0.0296747*@6))+-0.0277647), (((0.0307126*((exp(@7)-exp((-@7)))/(exp(@7)+exp((-@7)))))+(0.035189*((exp(@8)-exp((-@8)))/(exp(@8)+exp((-@8))))))+0.000948778)
+state_2_lag_1 <<--- @1=((state_1_lag_1--0.000122589)/0.00352367), @2=((state_2_lag_1--0.000468091)/0.0228845), @3=((state_1_lag_2--9.18993e-05)/0.00353787), @4=((state_2_lag_2-7.97144e-05)/0.0226143), @5=((input_1_lag_0--0.00115011)/0.0581787), @6=((input_1_lag_1--0.0021914)/0.0580589), @7=(((((((0.0421667*@1)+(0.0105288*@2))+(0.0642783*@3))+(0.0207141*@4))+(-0.129506*@5))+(0.041167*@6))+-0.00440907), @8=(((((((-0.0127768*@1)+(0.0332566*@2))+(-0.00804659*@3))+(-0.00634837*@4))+(0.156069*@5))+(-0.0296747*@6))+-0.0277647), (((-0.0795851*((exp(@7)-exp((-@7)))/(exp(@7)+exp((-@7)))))+(0.0739332*((exp(@8)-exp((-@8)))/(exp(@8)+exp((-@8))))))+0.0016903)
+state_1_lag_2 <<--- state_1_lag_1
+state_2_lag_2 <<--- state_2_lag_1
+input_1_lag_1 <<--- input_1_lag_0
+
+## todo
 
 techniques to prevent overfitting
 1. regularisation

@@ -184,13 +184,18 @@ class MPC_Brancher():
         default_lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
         default_ubx  = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
 
+        # debug printouts
+        if self.verbose:
+            print(f"\n\n-------- Iterative Constricting Boundary Nominal Model Predictive Control --------")
+            print(f"Time: {self.t0}")
+
         for i in range(self.max_search):
 
             # debug printouts
             if self.verbose:
-                print(f"\n\n--------- Iterative Boundary Nominal Model Predictive Control ---------")
-                print(f"Frame Number: {self.frame_number}")
-                print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}\n\n")
+                print(f"\n\n---- Initiating search ----")
+                print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}")
+                print(f"Frame Number: {self.frame_number}\n\n")
 
             # re-init to old state
             prev_ic = self._generate_initial_guess(states=prev_state, inputs=prev_input)
@@ -231,23 +236,74 @@ class MPC_Brancher():
             adjust_flag = self._adjust_bounds(mpc=self.mpc, branches=branches,
                                               default_lbx = default_lbx, default_ubx=default_ubx)
             
-            # debug printouts
-            if self.verbose:
-                print(f"\n\nBoundary adjusted: {adjust_flag}")
-                print(f"State Upper Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')}")
-                print(f"State Lower Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')}")
-                print(f"Input Upper Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')}")
-                print(f"Input Lower Bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')}")
-                print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}")
-                print(f"Calculated input: {u0}")
-                print(f"Calculated next state: {branches['states'][1][0,:]}")
-                print(f"--------- End ---------\n\n")
-            
             # increment frame number
             self.frame_number += 1
 
             if adjust_flag == False:
+
+                # debug printouts
+                if self.verbose:
+                    print(f"\n\nBoundary adjusted: {adjust_flag}")
+                    print(
+                        f"modified optimal state upper bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')}")
+                    print(
+                        f"modified optimal state lower bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')}")
+                    print(
+                        f"modified optimal input upper bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')}")
+                    print(
+                        f"modified optimal input lower bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')}")
+                    print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}")
+                    print(f"surrogate predicted optimal input: {u0}")
+                    print(f"surrogate predicted optimal next state: {branches['states'][1][0, :]}")
+                    print(f"initial state: {branches['states'][0]}")
+                    print()
+                    print(f"-------- Success! Feasible input found. --------\n\n")
+
                 break
+
+            elif i == self.max_search-1:
+
+                # debug printouts
+                if self.verbose:
+                    print(f"\n\nBoundary adjusted: {adjust_flag}")
+                    print(
+                        f"last modified state upper bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')}")
+                    print(
+                        f"last modified state lower bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')}")
+                    print(
+                        f"last modified input upper bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')}")
+                    print(
+                        f"last modified input lower bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')}")
+                    print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}")
+                    print(f"surrogate predicted input: {u0}")
+                    print(f"surrogate predicted next state: {branches['states'][1][0, :]}")
+                    print(f"initial state: {branches['states'][0]}")
+                    print()
+                    print(f"-------- Max interation reached and feasible input not found! Last calculated input returned. --------\n\n")
+
+            else:
+
+                # debug printouts
+                if self.verbose:
+                    print(f"\n\nBoundary adjusted: {adjust_flag}")
+                    print(
+                        f"re-modified state upper bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')}")
+                    print(
+                        f"re-modified state lower bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')}")
+                    print(
+                        f"re-modified input upper bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')}")
+                    print(
+                        f"re-modified input lower bound: {self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')}")
+                    print(f"Time: {self.t0}, Iteration: {i + 1} / {self.max_search}")
+                    print(f"surrogate predicted input: {u0}")
+                    print(f"surrogate predicted next state: {branches['states'][1][0, :]}")
+                    print(f"initial state: {branches['states'][0]}")
+                    print()
+                    print(
+                        f"---- Feasible input not found! Recalculating again. ---->>>>\n\n")
+
+
+
 
         # revert back to the system boundaries for the state
         self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=default_ubx)

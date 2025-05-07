@@ -147,7 +147,7 @@ class DataManager(plotter):
         for i in tqdm(range(n_samples), desc= 'Generating data'):
 
             # executes if the system decides for a change
-            if np.random.rand() < change_probability:
+            if i==0 or np.random.rand() < change_probability:
                 #u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1,1))
                 u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1,1))
                 u_prev = u0
@@ -630,38 +630,40 @@ class DataManager(plotter):
         inputs_history = narx_inputs[[col for col in narx_inputs.columns if col.startswith('input') and not col.endswith('lag_0')]]
 
         # extracting random column
-        states_history = states_history.to_numpy()[rnd_col, :]
-        inputs_history = inputs_history.to_numpy()[rnd_col, :]
+        states_history = states_history.to_numpy()[rnd_col, :].reshape((-1, n_x))
+        inputs_history = inputs_history.to_numpy()[rnd_col, :].reshape((-1, n_u))
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            # set initial guess for surrogate simulator
-            #self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)),
-            #                           inputs=self.reshape(inputs_history, shape=(n_u, -1)))
-            cqr_mpc.states= states_history.reshape((-1, n_x))
-            cqr_mpc.inputs= inputs_history.reshape((-1, n_u))
+            cqr_mpc.states= states_history
+            cqr_mpc.inputs= inputs_history
             cqr_mpc.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
-            #self.cqr_set_initial_guess(states=self.reshape(states_history, shape=(n_x, -1)))
-            cqr_mpc.states= states_history.reshape((-1, n_x))
+            cqr_mpc.states= states_history
             cqr_mpc.set_initial_guess()
 
         # extracting the most recent initial state for the data
-        x0 = states_history[0:n_x].reshape((n_x, 1))
+        x0 = states_history[0, :].reshape((n_x, 1))
 
         # setting initial guess to simulator
         simulator.x0=x0
         simulator.set_initial_guess()
 
         # run the main loop
-        for _ in range(iter):
+        for i in range(iter):
 
-            u0 = cqr_mpc.make_step(x0, enable_plots = True)
-            #x0, x0_cqr_high, x0_cqr_low = self.cqr_make_step(u0)
+            u0 = cqr_mpc.make_step(x0, enable_plots = store_gif)
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)
+
+            print(f"\n\n++++#### Simulation report ####++++")
+            print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
+            print(f"Input: {u0}")
+            print(f"Measurement: {y0}")
+            print(f"State Estimate: {x0}")
+            print(f"++++#### End ####++++\n\n")
 
             if store_gif:
                 all_plots.append(cqr_mpc.plot_trials_matplotlib(show_plot=False))
@@ -718,7 +720,7 @@ class DataManager(plotter):
 
         return  None
 
-    def show_gif_matplotlib(self, gif_name="plotly_animation_matplotlib.gif", gif_path="", temp_dir="matplotlib_frames", duration=0.5):
+    def show_gif_matplotlib(self, gif_name="matplotlib_animation.gif", gif_path="", temp_dir="matplotlib_frames", duration=0.5):
         assert self.store_gif, "Create gif not enabled in run_simulation!"
 
         # init
@@ -783,31 +785,31 @@ class DataManager(plotter):
 
         # extracting random column
         states_history = narx_inputs.loc[rnd_col,
-        [var_name for var_name in self.data['x_label'] if var_name.startswith('state')]].to_numpy()
+        [var_name for var_name in self.data['x_label'] if var_name.startswith('state')]].to_numpy().reshape((-1, n_x))
         inputs_history = narx_inputs.loc[rnd_col,
         [var_name for var_name in self.data['x_label']
-         if var_name.startswith('input') and not var_name.endswith('lag_0')]].to_numpy()
+         if var_name.startswith('input') and not var_name.endswith('lag_0')]].to_numpy().reshape((-1, n_u))
 
         # initial cond
-        real_simulator.x0 = states_history[0:n_x]
+        real_simulator.x0 = states_history[0, :]
         real_simulator.set_initial_guess()
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            cqr_model.states = states_history.reshape((-1, n_x))
-            cqr_model.inputs = inputs_history.reshape((-1, n_u))
+            cqr_model.states = states_history
+            cqr_model.inputs = inputs_history
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history.reshape((-1, n_x))
-            surrogate_model.inputs = inputs_history.reshape((-1, n_u))
+            surrogate_model.states = states_history
+            surrogate_model.inputs = inputs_history
             surrogate_model.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_model.states = states_history.reshape((-1, n_x))
+            cqr_model.states = states_history
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history.reshape((-1, n_x))
+            surrogate_model.states = states_history
             surrogate_model.set_initial_guess()
 
         # main loop
