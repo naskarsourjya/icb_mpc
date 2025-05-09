@@ -598,7 +598,6 @@ class DataManager(plotter):
                        confidence_cutoff, setpoint, max_search, store_gif=False):
         # init
         df = self.data['test']
-        narx_inputs = df[self.data['x_label']]
         #narx_outputs = self.data['test_outputs']
         n_x = self.data['n_x']
         n_u = self.data['n_u']
@@ -621,17 +620,9 @@ class DataManager(plotter):
                                       max_search=max_search)
 
 
-        # take initial guess from test data
-        rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
-
-        # extracting data
-        states_history = narx_inputs[[col for col in narx_inputs.columns if col.startswith('state')]]
-        u0 = narx_inputs[[col for col in narx_inputs.columns if col.startswith('input') and col.endswith('lag_0')]]
-        inputs_history = narx_inputs[[col for col in narx_inputs.columns if col.startswith('input') and not col.endswith('lag_0')]]
-
-        # extracting random column
-        states_history = states_history.to_numpy()[rnd_col, :].reshape((-1, n_x))
-        inputs_history = inputs_history.to_numpy()[rnd_col, :].reshape((-1, n_u))
+        # generate a new ic
+        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic = True, max_iter = 10000)
+        inputs_history = inputs[1:, :]
 
         # setting initial guess to mpc if order > 1
         if order > 1:
@@ -680,6 +671,55 @@ class DataManager(plotter):
 
 
         return None
+
+
+    def _simulate_initial_guess(self, system, zero_ic = False, max_iter = 10000):
+
+        model = system._get_model()
+        simulator = system._get_simulator(model=model)
+
+        if zero_ic:
+            x0 = np.zeros((model.n_x, 1))
+            u0 = np.zeros((model.n_u, 1))
+
+            assert np.all(x0 > system.lbx) and np.all(x0 < system.ubx), 'Zero state not feasible!'
+            assert np.all(u0 > system.lbu) and np.all(u0 < system.ubu), 'Zero input not feasible!'
+
+        else:
+            x0 = np.random.uniform(system.lbx, system.ubx).reshape((-1, 1))
+            u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1, 1))
+
+        x0_prev = x0
+        u0_prev = u0
+        reversed_states = []
+        reversed_inputs = []
+
+        for i in range(self.data['order']):
+
+            for j in range(max_iter):
+                simulator.x0 = x0_prev
+                simulator.set_initial_guess()
+
+                x0 = simulator.make_step(u0=u0)
+
+                if np.all(x0 > system.lbx) and np.all(x0 < system.ubx):
+                    reversed_states.append(x0_prev.reshape(1, -1))
+                    reversed_inputs.append(u0_prev.reshape(1, -1))
+
+                    x0_prev = x0
+                    u0_prev = u0
+                    break
+
+                else:
+                    u0 = np.random.uniform(system.lbu, system.ubu).reshape((-1, 1))
+
+        # reversing the data
+        states = list(reversed(reversed_states))
+        inputs = list(reversed(reversed_inputs))
+
+        # end
+        return np.vstack(states), np.vstack(inputs)
+
 
 
     def show_gif(self, file_name= "plotly_animation.gif", frame_dir = "plotly_frames"):
@@ -777,18 +817,9 @@ class DataManager(plotter):
         order = self.data['order']
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
 
-        # extracting random column
-        #states_history = narx_inputs.to_numpy()[rnd_col, 0:n_x * order]
-        #inputs_n = narx_inputs.to_numpy()[rnd_col, n_x * order:]
-        #u0 = inputs_n[0:n_u]
-        #inputs_history = inputs_n[n_u:]
-
-        # extracting random column
-        states_history = narx_inputs.loc[rnd_col,
-        [var_name for var_name in self.data['x_label'] if var_name.startswith('state')]].to_numpy().reshape((-1, n_x))
-        inputs_history = narx_inputs.loc[rnd_col,
-        [var_name for var_name in self.data['x_label']
-         if var_name.startswith('input') and not var_name.endswith('lag_0')]].to_numpy().reshape((-1, n_u))
+        # generate a new ic
+        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=True, max_iter=10000)
+        inputs_history = inputs[1:, :]
 
         # initial cond
         real_simulator.x0 = states_history[0, :]

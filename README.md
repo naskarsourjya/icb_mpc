@@ -151,6 +151,10 @@ state_1_lag_2 <<--- state_1_lag_1
 state_2_lag_2 <<--- state_2_lag_1
 input_1_lag_1 <<--- input_1_lag_0
 
+# Week 17 (14/05/2025)
+
+Inside the icbmpc algo, if the states cross boundary further away (but boundaries not exceeded in the next state), the boundaries are still constricted. Should we have a cutoff for this, to reduce iterations?
+
 ## todo
 
 techniques to prevent overfitting
