@@ -104,7 +104,7 @@ class Surrogate():
             indices = self.extract_numbers(var_name)
 
             # model equation
-            if var_name.startswith('state') and var_name.endswith('lag_1'):
+            if var_name.startswith('state') and var_name.endswith('lag_0'):
                 rhs_n = output_layer[indices[0]-1, 0]
                 rhs_list.append(rhs_n)
                 model.set_rhs(var_name, rhs_n)

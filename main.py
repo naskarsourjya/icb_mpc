@@ -22,7 +22,7 @@ dm.data_splitter(order=3)
 dm.narx_trainer(hidden_layers=[2], batch_size=1000,
           learning_rate=0.1, epochs= 1000, scheduler_flag=True, device=default_device)
 dm.narx.plot_narx_training_history_plotly()
-dm.narx.model
+#dm.narx.model
 #ann.save_narx(filename='data\\narx10_10_s1000_o1.pkl')
 
 #ann.load_narx(filename='data\\narx10_10_s1000_o1.pkl')
@@ -57,7 +57,7 @@ dm.cqr.plot_qr_training_history()
 #dm.plot_simulation()
 #dm.show_gif()
 
-dm.check_simulator(system=spring_system, iter= 50)
+#dm.check_simulator(system=spring_system, iter= 50)
 dm.run_simulation(system=spring_system, iter=10, n_horizon=10, r=0.01, tightner=1,
                   confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5, store_gif=True)
 #dm.plot_simulation()

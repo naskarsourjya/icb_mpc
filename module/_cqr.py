@@ -721,7 +721,7 @@ class cqr_narx():
 
         # plot for each state
         for i in range(n_x):
-            col_name = f'state_{i+1}_lag_0'
+            col_name = f'state_{i+1}_next'
             # plot the real mean
             #ax[i].plot(x_sorted, y_calib[i, :][sorted_indices], label=f'real mean')
             fig.add_trace(go.Scatter(x=x_sorted, y=y_test[col_name][sorted_indices],

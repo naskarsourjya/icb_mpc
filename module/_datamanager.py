@@ -259,9 +259,15 @@ class DataManager(plotter):
 
         # Add lagged columns
         for i in range(-1, order):
-            for col in x_names:
-                col_name = f"{col}_lag_{i+1}"
-                df_new[col_name] = df_new[col].shift(i)
+
+            if i==-1:
+                for col in x_names:
+                    col_name = f"{col}_next"
+                    df_new[col_name] = df_new[col].shift(i)
+            else:
+                for col in x_names:
+                    col_name = f"{col}_lag_{i}"
+                    df_new[col_name] = df_new[col].shift(i)
 
         # Add lagged columns
         for i in range(order):
@@ -275,13 +281,12 @@ class DataManager(plotter):
         df_new.reset_index(inplace=True, drop=True)
 
         # labels for dataset
-        y_label = [f'state_{i + 1}_lag_0' for i in range(self.data['n_x'])]
+        y_label = [f'state_{i + 1}_next' for i in range(self.data['n_x'])]
         x_label=[]
-        for i in range(order+1):
+        for i in range(order):
             for j, col in enumerate(x_names):
-                if i > 0:
-                    col_name = f"{col}_lag_{i}"
-                    x_label.append(col_name)
+                col_name = f"{col}_lag_{i}"
+                x_label.append(col_name)
         for i in range(order):
             for col in u_names:
                 col_name = f"{col}_lag_{i}"
@@ -548,13 +553,13 @@ class DataManager(plotter):
 
         # setting up boundaries for mpc: lower bound for states
         #lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.inf)])
-        mpc.bounds['lower', '_x', 'state_1_lag_1'] = self.data['lbx'][0]
-        mpc.bounds['lower', '_x', 'state_2_lag_1'] = self.data['lbx'][1]
+        mpc.bounds['lower', '_x', 'state_1_lag_0'] = self.data['lbx'][0]
+        mpc.bounds['lower', '_x', 'state_2_lag_0'] = self.data['lbx'][1]
 
         # upper bound for states
         #ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.inf)])
-        mpc.bounds['upper', '_x', 'state_1_lag_1'] = self.data['ubx'][0]
-        mpc.bounds['upper', '_x', 'state_2_lag_1'] = self.data['ubx'][1]
+        mpc.bounds['upper', '_x', 'state_1_lag_0'] = self.data['ubx'][0]
+        mpc.bounds['upper', '_x', 'state_2_lag_0'] = self.data['ubx'][1]
 
         # lower bound for inputs
         mpc.bounds['lower', '_u', 'input_1_lag_0'] = self.data['lbu']
