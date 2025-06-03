@@ -10,8 +10,8 @@ class plotter():
     def __init__(self):
 
         # plottting row size
-        self.height_px = 700
-        self.width_px = 1800
+        self.height_px = 9
+        self.width_px = 16
 
     def visualize2d_data(self):
 
@@ -23,7 +23,7 @@ class plotter():
         df = self.data['simulation']
 
         # setting up plot
-        fig, ax = plt.subplots(1 + self.data['n_u'], figsize=(24, 6 * (1 + self.data['n_u'])))
+        fig, ax = plt.subplots(1 + self.data['n_u'], figsize=(self.width_px, self.height_px))
         fig.suptitle('Input and State space plot')
 
         ax[0].plot(df['state_1'], df['state_2'],)
@@ -75,7 +75,7 @@ class plotter():
 
         # setting up plot
         fig, ax = plt.subplots(self.data['n_x'] + self.data['n_u'],
-                               figsize=(24, 6 * (self.data['n_x'] + self.data['n_u'])))
+                               figsize=(self.width_px, self.height_px))
         fig.suptitle('Input and State space plot')
 
         for i in range(self.data['n_x']):
@@ -131,7 +131,7 @@ class plotter():
         assert self.flags['simulation_ready'], 'Simulation not run! Run simulation first.'
 
         # using do-mpc for the plot
-        fig, ax, graphics = do_mpc.graphics.default_plot(self.simulation['simulator'].data, figsize=(16, 9))
+        fig, ax, graphics = do_mpc.graphics.default_plot(self.simulation['simulator'].data, figsize=(self.width_px, self.height_px))
         graphics.plot_results()
         graphics.reset_axes()
         for ax_n in ax:

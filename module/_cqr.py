@@ -143,7 +143,7 @@ class cqr_narx():
         return None
 
 
-    def setup_plot(self, height_px=3, width_px=18):
+    def setup_plot(self, height_px=9, width_px=16):
 
         self.height_px = height_px
         self.width_px = width_px
@@ -434,10 +434,10 @@ class cqr_narx():
         assert self.flags['qr_ready'], "Qunatile regressor not ready."
         assert self.flags['cqr_ready'], "Qunatile regressor not conformalised."
         assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"
-        assert u0.shape[0] == self.n_u, \
-            f"u0 should have have {self.n_u} rows but instead found {u0.shape[0]}!"
-        assert u0.shape[1] == 1, \
-            f"u0 should have have 1 columns but instead found {u0.shape[1]}!"
+        assert u0.shape[0] == 1, \
+            f"u0 should have have 1 row but instead found {u0.shape[0]}!"
+        assert u0.shape[1] == self.n_u, \
+            f"u0 should have have {self.n_u} columns but instead found {u0.shape[1]}!"
 
         # init
         n_x = self.n_x
@@ -579,102 +579,45 @@ class cqr_narx():
 
 
     def plot_qr_training_history(self):
-        assert self.flags['qr_ready'] == True, 'CQR not found! Generate or load CQR model!'
-
+        assert self.flags['qr_ready'] is True, 'CQR not found! Generate or load CQR model!'
 
         if self.type == 'individual':
-
             quantiles = self.quantiles
             n_q = len(quantiles)
 
-            # plot init
-            fig = make_subplots(
-                rows=n_q, cols=2,
-                shared_xaxes=True,
-                subplot_titles=['Learning rate', 'Loss'],
-                specs=[[{}, {"secondary_y": True}] for _ in quantiles],
-                # Enable secondary y-axis in column 2
-                row_heights=[0.5] * n_q,  # Adjust row heights for better layout
-                column_widths=[1] * 2
-            )
+            fig, axs = plt.subplots(n_q, 2, figsize=(self.width_px, self.height_px), sharex='col')
+            fig.suptitle("Individual CQR Training History")
 
-            # updating layout
-            fig.update_layout(title_text='Individual CQR Training History',
-                              height=self.height_px * 100 * n_q, width=self.width_px * 100)
-
-            # making plots
             for i, quantile in enumerate(quantiles):
-                # Extracting history
                 training_history = self.train_history_list[i]
+                epochs = training_history['epochs']
 
-                # Plot 1: Learning Rate (left column)
-                fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['learning_rate'],
-                                         mode='lines', line=dict(color='red'),
-                                         name='learning rate',
-                                         showlegend=False),
-                              row=i + 1, col=1)
-                fig.update_yaxes(type='log', title_text=f'CQR (q={quantile})\nLearning Rate', row=i + 1, col=1)
-                fig.update_xaxes(title_text='epochs', row=i + 1, col=1)
+                # Learning Rate (left column)
+                ax_lr = axs[i, 0]
+                ax_lr.plot(epochs, training_history['learning_rate'], color='red')
+                ax_lr.set_yscale('log')
+                ax_lr.set_ylabel(f'CQR (q={quantile})\nLearning Rate')
+                ax_lr.set_xlabel('Epochs')
 
-                # Plot 2: Training Loss (primary y-axis in right column)
-                fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['training_loss'],
-                                         mode='lines', line=dict(color='green'),
-                                         name='training loss',
-                                         showlegend=True if i == 0 else False),
-                              row=i + 1, col=2)
-                fig.update_yaxes(type='log', title_text=f'CQR (q={quantile})\nTraining Loss', row=i + 1, col=2)
+                # Losses (right column) with twin y-axis
+                ax_loss = axs[i, 1]
+                ax_val = ax_loss.twinx()
+                ax_loss.plot(epochs, training_history['training_loss'], color='green', label='Training Loss')
+                ax_val.plot(epochs, training_history['validation_loss'], color='blue', label='Validation Loss')
 
-                # Validation Loss (secondary y-axis in right column)
-                fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['validation_loss'],
-                                         mode='lines', line=dict(color='blue'),
-                                         name = 'validation loss',
-                                         showlegend=True if i == 0 else False),
-                              row=i + 1, col=2, secondary_y=True)
-                fig.update_yaxes(title_text=f'CQR (q={quantile})\nValidation Loss', type='log',
-                                 row=i + 1, col=2, secondary_y=True)
-                fig.update_xaxes(title_text='epochs', row=i + 1, col=2)
+                ax_loss.set_yscale('log')
+                ax_val.set_yscale('log')
 
-            fig.show()
+                ax_loss.set_ylabel(f'CQR (q={quantile})\nTraining Loss', color='green')
+                ax_val.set_ylabel(f'CQR (q={quantile})\nValidation Loss', color='blue')
+                ax_loss.set_xlabel('Epochs')
 
-        elif self.type == 'all':
-            # Create subplots with secondary_y set in row 2
-            fig = make_subplots(
-                rows=2, cols=1, shared_xaxes=True,
-                subplot_titles=['Loss', 'Learning Rate'],
-                specs=[[{"secondary_y": True}], [{"secondary_y": False}]]  # Enable secondary y-axis only in row 2
-            )
+                if i == 0:
+                    ax_loss.legend(loc='upper left')
+                    ax_val.legend(loc='upper right')
 
-            fig.update_layout(title_text='All CQR Training History', height=self.height_px, width=self.width_px)
-
-            # Extracting history
-            training_history = self.train_history_list[0]
-
-            # Plot 1: Training Loss (primary y-axis in row 1)
-            fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['training_loss'],
-                                     mode='lines', line=dict(color='green'),
-                                     name=f'training loss',
-                                     showlegend=True),
-                          row=1, col=1)
-            fig.update_yaxes(type='log', title_text='Training Loss', row=1, col=1)
-
-            # Validation Loss (secondary y-axis in row 1)
-            fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['validation_loss'],
-                                     mode='lines', line=dict(color='red'),
-                                     name=f'validation loss',
-                                     showlegend=True),
-                          row=1, col=1, secondary_y=True)
-            fig.update_yaxes(title_text='Validation Loss', type='log', row=1, col=1, secondary_y=True)
-            fig.update_xaxes(title_text='epochs', row=1, col=1)
-
-            # Plot 2: Learning Rate (row 2)
-            fig.add_trace(go.Scatter(x=training_history['epochs'], y=training_history['learning_rate'],
-                                     mode='lines', line=dict(color='blue'),
-                                     showlegend=False),
-                          row=2, col=1)
-            fig.update_yaxes(type='log', title_text='Learning Rate', row=2, col=1)
-            fig.update_xaxes(title_text='epochs', row=2, col=1)
-
-            fig.show()
+            plt.tight_layout(rect=[0, 0, 1, 0.95])
+            plt.show()
 
         return None
 
@@ -711,7 +654,7 @@ class cqr_narx():
         #fig.suptitle('QR Error plots')
 
         fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * 100 * n_x, width=self.width_px * 100, title_text="QR Error Plots",
+        fig.update_layout(height=self.height_px * 100, width=self.width_px * 100, title_text="QR Error Plots",
                           showlegend=True)
 
         # sorting with timestamps
@@ -799,7 +742,7 @@ class cqr_narx():
 
         # Create subplots
         fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * 100 * n_x, width=self.width_px * 100, title_text="CQR State Plots",
+        fig.update_layout(height=self.height_px * 100, width=self.width_px * 100, title_text="CQR State Plots",
                           showlegend=True)
 
         # Loop through each state
@@ -883,7 +826,8 @@ class cqr_narx():
         n_u = self.n_u
         order = self.order
         state_n = self.states.reshape((1, -1))
-        input_n = self.inputs.reshape((1, -1))
+        if self.order>1:
+            input_n = self.inputs.reshape((1, -1))
         alpha_branch = [1]
         time_branch = [0.0]
         steps = u0_traj.shape[0]
@@ -900,7 +844,10 @@ class cqr_narx():
             u0_stacked = np.vstack([u0] * n_samples)
 
             # stacking all data
-            X = np.hstack([state_n, u0_stacked, input_n])
+            if self.order > 1:
+                X = np.hstack([state_n, u0_stacked, input_n])
+            else:
+                X = np.hstack([state_n, u0_stacked])
 
             # setting default device
             self._set_device(torch_device=self.full_model.torch_device)
@@ -941,7 +888,8 @@ class cqr_narx():
 
             # preparing the next initial conditions
             state_n = np.hstack([x0_next, np.vstack([state_n]*(3 + self.rnd_samples))])[:, 0:n_x*order]
-            input_n = np.hstack([np.vstack([u0]*x0_next.shape[0]), np.vstack([input_n]*(3 + self.rnd_samples))])[:, 0:n_u*(order-1)]
+            if self.order > 1:
+                input_n = np.hstack([np.vstack([u0]*x0_next.shape[0]), np.vstack([input_n]*(3 + self.rnd_samples))])[:, 0:n_u*(order-1)]
 
             # stores the branched states
             if self.confidence_cutoff == 1:
@@ -1052,7 +1000,7 @@ class cqr_narx():
         time_stamp_inputs = np.arange(t0, t0 + (self.t_step * u0_traj.shape[0]), self.t_step)[0:u0_traj.shape[0]]
 
         # Create subplots
-        fig, axes = plt.subplots(n_x + n_u, 1, figsize=(self.width_px, self.height_px * (n_x + n_u)), sharex=True)
+        fig, axes = plt.subplots(n_x + n_u, 1, figsize=(self.width_px, self.height_px), sharex=True)
 
         if n_x + n_u == 1:  # If there's only one subplot, wrap axes in a list for consistency
             axes = [axes]

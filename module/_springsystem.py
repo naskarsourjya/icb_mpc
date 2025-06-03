@@ -1,6 +1,5 @@
 import do_mpc
 import numpy as np
-import casadi as ca
 
 
 class SpringSystem:
@@ -141,5 +140,59 @@ class SpringSystem:
         # setup
         mpc.setup()
         
+        # end
+        return mpc
+
+
+    def _get_mpc(self, model, n_horizon, setpoint, r):
+        # init
+        mpc = do_mpc.controller.MPC(model)
+
+        # supperess ipopt output
+        if self.suppress_ipopt:
+            mpc.settings.supress_ipopt_output()
+
+        # set t_step
+        mpc.set_param(t_step=self.t_step)
+
+        # set horizon
+        mpc.set_param(n_horizon=n_horizon)
+
+        # setting up cost function
+        x = model.x.master
+        mterm = (setpoint - x[0]) ** 2
+
+        # passing objective function
+        mpc.set_objective(mterm=mterm, lterm=mterm)
+
+        # input penalisation
+        mpc.set_rterm(f_external=r)
+
+        # set control bounds
+        mpc.bounds['lower', '_u', 'f_external'] = self.lbu
+        mpc.bounds['upper', '_u', 'f_external'] = self.ubu
+
+        # set state bounds
+        mpc.bounds['lower', '_x', 'position'] = self.lbx[0]
+        mpc.bounds['upper', '_x', 'position'] = self.ubx[0]
+        mpc.bounds['lower', '_x', 'velocity'] = self.lbx[1]
+        mpc.bounds['upper', '_x', 'velocity'] = self.ubx[1]
+
+        # enter random setpoints inside the box constraints
+        tvp_template = mpc.get_tvp_template()
+
+        # sending random setpoints inside box constraints
+        def tvp_fun(t_ind):
+            x_ref = np.random.uniform(self.lbx, self.ubx)
+            # print(x_ref)
+            tvp_template['_tvp', :, 'position_ref'] = x_ref[0]
+            tvp_template['_tvp', :, 'velocity_ref'] = x_ref[1]
+            return tvp_template
+
+        mpc.set_tvp_fun(tvp_fun)
+
+        # setup
+        mpc.setup()
+
         # end
         return mpc

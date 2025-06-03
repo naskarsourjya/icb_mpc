@@ -317,6 +317,8 @@ class Surrogate():
     def make_step(self, u0):
         assert self.flags['initial_condition_ready'] == True, \
             'Surrogate model initial condition not set! Set initial condition!'
+        assert u0.shape == (1, self.n_u), \
+            f'Input shape is incorrect! Expected shape is (1, {self.n_u}).'
 
         # init
         #initial_cond = self.initial_cond
@@ -327,7 +329,7 @@ class Surrogate():
         #states = initial_cond[0:n_x * order, :]
         #inputs = initial_cond[n_x * order:, :]
 
-        x_full = self.simulator.make_step(u0=u0)
+        x_full = self.simulator.make_step(u0=u0.reshape((-1, 1)))
 
         x0 = x_full[0:self.n_x,]
 

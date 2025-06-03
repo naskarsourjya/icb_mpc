@@ -3,13 +3,13 @@ import numpy as np
 
 # init
 default_device = 'cpu'
-spring_system = SpringSystem(set_seed=0)
+cstr_system = CSTR_dompc(set_seed=0)
 dm = DataManager(set_seed = 0)
 
 # pipeline to generate data and store
 #su.random_state_sampler(system = spring_system, n_samples=50)
-dm.random_input_sampler(system = spring_system, n_samples=10000)
-dm.data_splitter(order=3)
+dm.random_input_sampler(system = cstr_system, n_samples=10000)
+dm.data_splitter(order=1)
 #dm.visualize2d_data()
 #ann.store_raw_data(filename='data\spring_random_1000.pkl')
 
@@ -21,7 +21,7 @@ dm.data_splitter(order=3)
 #          learning_rate=0.1, epochs= 100)
 dm.narx_trainer(hidden_layers=[2], batch_size=1000,
           learning_rate=0.1, epochs= 1000, scheduler_flag=True, device=default_device)
-dm.narx.plot_narx_training_history_plotly()
+#dm.narx.plot_narx_training_history()
 #dm.narx.model
 #ann.save_narx(filename='data\\narx10_10_s1000_o1.pkl')
 
@@ -43,7 +43,7 @@ dm.train_individual_qr(alpha=0.1, hidden_layers=[2], batch_size=1000,
              lr_threshold=1e-7, epochs=1000, scheduler_flag=True, device=default_device)
 
 #su.train_individual_qr(alpha=0.2, hidden_layers=[10], batch_size=320)
-dm.cqr.plot_qr_training_history()
+#dm.cqr.plot_qr_training_history()
 #dm.cqr_plot_qr_error()
 #dm.plot_cqr_error_plotly()
 #su.cqr_set_initial_guess(states=np.array([[0.1, 0.2, 0.3],
@@ -58,7 +58,9 @@ dm.cqr.plot_qr_training_history()
 #dm.show_gif()
 
 #dm.check_simulator(system=spring_system, iter= 50)
-dm.run_simulation(system=spring_system, iter=10, n_horizon=10, r=0.01, tightner=1,
+dm.check_simulator_mpc(system=cstr_system, iter=50, setpoint=0.008, n_horizon= 10, r= 0.01, tightner=1,
+                       confidence_cutoff=0.8, max_search=5)
+dm.run_simulation(system=cstr_system, iter=10, n_horizon=10, r=0.01, tightner=1,
                   confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5, store_gif=True)
 #dm.plot_simulation()
 #dm.show_gif_matplotlib()

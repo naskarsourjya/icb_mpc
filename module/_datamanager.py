@@ -513,8 +513,7 @@ class DataManager(plotter):
         return None
 
 
-    def step_state_mpc(self, model, n_horizon, r, cqr, tightner, confidence_cutoff,
-                       setpoint, max_search, suppress_ipopt=False):
+    def step_state_mpc(self, model, n_horizon, r, setpoint, suppress_ipopt=False):
 
         # init
         n_x = self.data['n_x']
@@ -551,21 +550,15 @@ class DataManager(plotter):
         # input penalisation
         mpc.set_rterm(input_1_lag_0=r)
 
-        # setting up boundaries for mpc: lower bound for states
-        #lbx = np.vstack([self.data['lbx'].reshape(-1,1), np.full((narx_state_length - n_x,1), -np.inf)])
-        mpc.bounds['lower', '_x', 'state_1_lag_0'] = self.data['lbx'][0]
-        mpc.bounds['lower', '_x', 'state_2_lag_0'] = self.data['lbx'][1]
+        # setting up boundaries for mpc states
+        for i in range(self.data['n_x']):
+            mpc.bounds['lower', '_x', f'state_{i + 1}_lag_0'] = self.data['lbx'][i]
+            mpc.bounds['upper', '_x', f'state_{i + 1}_lag_0'] = self.data['ubx'][i]
 
-        # upper bound for states
-        #ubx = np.vstack([self.data['ubx'].reshape(-1, 1), np.full((narx_state_length - n_x, 1), np.inf)])
-        mpc.bounds['upper', '_x', 'state_1_lag_0'] = self.data['ubx'][0]
-        mpc.bounds['upper', '_x', 'state_2_lag_0'] = self.data['ubx'][1]
-
-        # lower bound for inputs
-        mpc.bounds['lower', '_u', 'input_1_lag_0'] = self.data['lbu']
-
-        # upper bound for inputs
-        mpc.bounds['upper', '_u', 'input_1_lag_0'] = self.data['ubu']
+        # setting up boundaries for mpc inputs
+        for j in range(self.data['n_u']):
+            mpc.bounds['lower', '_u', f'input_{j + 1}_lag_0'] = self.data['lbu'][j]
+            mpc.bounds['upper', '_u', f'input_{j + 1}_lag_0'] = self.data['ubu'][j]
 
         # enter random setpoints inside the box constraints
         tvp_template = mpc.get_tvp_template()
@@ -573,7 +566,7 @@ class DataManager(plotter):
         # sending random setpoints inside box constraints
         def tvp_fun(t_ind):
             #range_x = self.data['ubx'] - self.data['lbx']
-            tvp_template['_tvp', :, 'state_ref'] = np.array([[-0.8], [0]])
+            #tvp_template['_tvp', :, 'state_ref'] = np.array([[-0.8], [0]])
             #if t_ind<self.data['t_step']*iter/2:
             #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + step_mag * range_x
 
@@ -587,17 +580,8 @@ class DataManager(plotter):
         # setup
         mpc.setup()
 
-        # storage
-        self.cqr_mpc = MPC_Brancher(mpc=mpc, cqr=cqr, confidence_cutoff=confidence_cutoff,
-                                    tightner=tightner, max_search=max_search)
-
-        # flag update
-        self.flags.update({
-            'cqr_mpc_ready': True,
-        })
-
         # end
-        return self.cqr_mpc
+        return mpc
 
     def run_simulation(self, system, iter, n_horizon, r, tightner, rnd_samples,
                        confidence_cutoff, setpoint, max_search, store_gif=False):
@@ -609,7 +593,6 @@ class DataManager(plotter):
         order = self.data['order']
         all_plots = []
 
-
         # system init
         model = system._get_model()
         simulator = system._get_simulator(model=model)
@@ -620,28 +603,34 @@ class DataManager(plotter):
 
         # getting controller with surrogate model inside the mpc
         surrogate_model = self.narx_2_dompc()
-        cqr_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r,
-                                      cqr=self.cqr, tightner=tightner, confidence_cutoff=confidence_cutoff,
-                                      max_search=max_search)
+        surrogate_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r)
 
+        # storage
+        cqr_mpc = MPC_Brancher(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
+                                    tightner=tightner, max_search=max_search)
+
+        # flag update
+        self.flags.update({
+            'cqr_mpc_ready': True,
+        })
 
         # generate a new ic
-        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic = True, max_iter = 10000)
+        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic = False, max_iter = 10000)
         inputs_history = inputs[1:, :]
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            cqr_mpc.states= states_history
+            cqr_mpc.states= states_history.reshape((1, -1))
             cqr_mpc.inputs= inputs_history
             cqr_mpc.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_mpc.states= states_history
+            cqr_mpc.states= states_history.reshape((1, -1))
             cqr_mpc.set_initial_guess()
 
         # extracting the most recent initial state for the data
-        x0 = states_history[0, :].reshape((n_x, 1))
+        x0 = states_history[:, 0].reshape((n_x, 1))
 
         # setting initial guess to simulator
         simulator.x0=x0
@@ -678,7 +667,7 @@ class DataManager(plotter):
         return None
 
 
-    def _simulate_initial_guess(self, system, zero_ic = False, max_iter = 10000):
+    def _simulate_initial_guess(self, system, zero_ic = False, max_iter = 10000000):
 
         model = system._get_model()
         simulator = system._get_simulator(model=model)
@@ -696,10 +685,10 @@ class DataManager(plotter):
 
         x0_prev = x0
         u0_prev = u0
-        reversed_states = []
-        reversed_inputs = []
+        reversed_states = [x0]
+        reversed_inputs = [u0]
 
-        for i in range(self.data['order']):
+        for i in range(self.data['order']-1):
 
             for j in range(max_iter):
                 simulator.x0 = x0_prev
@@ -791,9 +780,9 @@ class DataManager(plotter):
         imageio.mimsave(gif_name, images, duration=duration)
 
         # Clean up temp files
-        for fname in filenames:
-            os.remove(fname)
-        os.rmdir(temp_dir)
+        #for fname in filenames:
+        #    os.remove(fname)
+        #os.rmdir(temp_dir)
 
         print(f"GIF saved to {gif_path}")
 
@@ -823,11 +812,11 @@ class DataManager(plotter):
         rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
 
         # generate a new ic
-        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=True, max_iter=10000)
+        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
         inputs_history = inputs[1:, :]
 
         # initial cond
-        real_simulator.x0 = states_history[0, :]
+        real_simulator.x0 = states_history[:, 0]
         real_simulator.set_initial_guess()
 
         # setting initial guess to mpc if order > 1
@@ -842,10 +831,10 @@ class DataManager(plotter):
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_model.states = states_history
+            cqr_model.states = states_history.reshape((-1, self.data['n_x']))
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history
+            surrogate_model.states = states_history.reshape((-1, self.data['n_x']))
             surrogate_model.set_initial_guess()
 
         # main loop
@@ -855,8 +844,8 @@ class DataManager(plotter):
 
             # simulation steps
             x0_real = real_simulator.make_step(u0=u_ref)
-            x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u_ref)
-            x0_surrogate = surrogate_model.make_step(u0=u_ref)
+            x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u_ref.reshape((1, -1)))
+            x0_surrogate = surrogate_model.make_step(u0=u_ref.reshape((1, -1)))
 
         # exporting logs
         #surrogate_model.export_log(file_name = 'Surrogate Model Log.csv')
@@ -865,13 +854,14 @@ class DataManager(plotter):
 
         # plots
         fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * n_x, width=self.width_px, title_text="Simulation Comparison Plots",
+        fig.update_layout(height=self.height_px * 100, width=self.width_px * 100, title_text="Simulation Comparison Plots",
                           showlegend=True)
 
         # plot for each state
         for i in range(n_x):
 
             # Shaded confidence interval (show legend for the first plot of each row)
+            
             fig.add_trace(go.Scatter(x=np.concatenate((cqr_model.history['time'].reshape(-1, ),
                                                        cqr_model.history['time'].reshape(-1, )[::-1])),
                                      y=np.concatenate((cqr_model.history['x0_cqr_high'][:, i],
@@ -881,19 +871,19 @@ class DataManager(plotter):
                                      name=f'Confidence {1 - cqr_model.alpha}',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
-
+            
             fig.add_trace(go.Scatter(x=real_simulator.data['_time'].reshape(-1,), y=real_simulator.data['_x'][:, i],
                                      mode='lines', line=dict(color='red'),
                                      name='real simulation',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
-
+            
             fig.add_trace(go.Scatter(x=cqr_model.history['time'].reshape(-1,), y=cqr_model.history['x0_cqr'][:, i],
                                      mode='lines', line=dict(color='green'),
                                      name='CQR Nominal',
                                      showlegend=True if i == 0 else False),
                           row=i + 1, col=1)
-
+            
             fig.add_trace(go.Scatter(x=surrogate_model.history['time'].reshape(-1,), y=surrogate_model.history['x0'][:, i],
                                      mode='lines', line=dict(color='yellow'),
                                      name='Surrogate',
@@ -908,5 +898,143 @@ class DataManager(plotter):
 
         # show plot
         fig.show()
+
+        return None
+
+
+    def check_simulator_mpc(self, system, iter, setpoint, n_horizon, r, tightner, confidence_cutoff, max_search):
+
+        real_model = system._get_model()
+        real_simulator = system._get_simulator(model=real_model)
+        #real_mpc = system._get_mpc(model= real_model, n_horizon= n_horizon, setpoint= setpoint, r= r)
+        u0_list = []
+
+        cqr_model = self.cqr
+
+        self.narx_2_dompc()
+        surrogate_model = self.surrogate
+
+        surrogate_mpc = self.step_state_mpc(model=self.surrogate.model, setpoint=setpoint, n_horizon=n_horizon, r=r)
+
+        # storage
+        cqr_mpc = MPC_Brancher(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
+                               tightner=tightner, max_search=max_search)
+
+        # extracting random initial point from test data
+        # take initial guess from test data
+        df = self.data['test']
+        narx_inputs = df[self.data['x_label']]
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+        rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
+
+        # generate a new ic
+        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
+        inputs_history = inputs[1:, :]
+
+        # initial cond
+        x0_surrogate = x0_real = states_history[:, 0].reshape((-1, 1))
+        real_simulator.x0 = states_history[:, 0]
+        #real_mpc.x0 = states_history[0, :]
+        real_simulator.set_initial_guess()
+        #real_mpc.set_initial_guess()
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            cqr_model.states = states_history.reshape((1, -1))
+            cqr_model.inputs = inputs_history.reshape((1, -1))
+            cqr_model.set_initial_guess()
+
+            surrogate_model.states = states_history.reshape((1, -1))
+            surrogate_model.inputs = inputs_history.reshape((1, -1))
+            surrogate_model.set_initial_guess()
+
+            cqr_mpc.states = states_history.reshape((1, -1))
+            cqr_mpc.inputs = inputs_history.reshape((1, -1))
+            cqr_mpc.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            cqr_model.states = states_history.reshape((1, -1))
+            cqr_model.set_initial_guess()
+
+            surrogate_model.states = states_history.reshape((1, -1))
+            surrogate_model.set_initial_guess()
+
+            cqr_mpc.states = states_history.reshape((1, -1))
+            cqr_mpc.set_initial_guess()
+
+        # main loop
+        for _ in range(iter):
+            # random input inside the input boundaries
+            u0_surrogate = cqr_mpc.make_step_nobranch(x0=x0_real)
+            #u0_real = real_mpc.make_step(x0= x0_real)
+
+            # simulation steps
+            x0_real = real_simulator.make_step(u0=u0_surrogate)
+            x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u0_surrogate.reshape((1, -1)))
+            x0_surrogate = surrogate_model.make_step(u0=u0_surrogate)
+
+            # storage
+            u0_list.append(u0_surrogate.reshape((1, -1)))
+
+        # exporting logs
+        #surrogate_model.export_log(file_name = 'Surrogate Model Log.csv')
+        #cqr_model.export_log(file_name = 'CQR_NARX Model Log.csv')
+        u0_list_numpy = np.vstack(u0_list)
+
+        fig, axes = plt.subplots(nrows=n_x + n_u, ncols=1, sharex=True,
+                                 figsize=(self.width_px, self.height_px))
+        if (n_x + n_u) == 1:
+            axes = [axes]  # Ensure axes is iterable
+
+        # Plot states
+        for i in range(n_x):
+            ax = axes[i]
+            time = cqr_model.history['time'].reshape(-1, )
+
+            # Confidence interval
+            upper = cqr_model.history['x0_cqr_high'][:, i]
+            lower = cqr_model.history['x0_cqr_low'][:, i]
+            ax.fill_between(time, lower, upper, color='gray', alpha=0.5,
+                            label=f'Confidence {1 - cqr_model.alpha}' if i == 0 else "")
+
+            # Real simulation
+            ax.plot(real_simulator.data['_time'], real_simulator.data['_x'][:, i], color='red',
+                    label='Real Simulation' if i == 0 else "")
+
+            # CQR Nominal
+            ax.plot(time, cqr_model.history['x0_cqr'][:, i], color='green', label='CQR Nominal' if i == 0 else "")
+
+            # Surrogate
+            ax.plot(surrogate_model.history['time'], surrogate_model.history['x0'][:, i], color='yellow',
+                    label='Surrogate' if i == 0 else "")
+
+            # System bounds (upper and lower)
+            ax.plot(real_simulator.data['_time'], [self.cqr.ubx[i]] * real_simulator.data['_time'].shape[0], color='grey', linestyle='solid',
+                    label='System Bounds' if i == 0 else None)
+            ax.plot(real_simulator.data['_time'], [self.cqr.lbx[i]] * real_simulator.data['_time'].shape[0], color='grey', linestyle='solid')
+
+
+            ax.set_ylabel(f'State {i + 1}')
+            ax.grid()
+            if i == 0:
+                ax.legend(loc='upper right')
+
+        # Plot inputs
+        for j in range(n_u):
+            ax = axes[n_x + j]
+            ax.plot(real_simulator.data['_time'], u0_list_numpy[:, j], color='black',
+                    label='Real Simulation' if j == 0 else "")
+            ax.set_ylabel(f'Input {j + 1}')
+            ax.set_xlabel('Time [s]')
+            ax.grid()
+            if j == 0:
+                ax.legend(loc='upper right')
+
+        plt.suptitle("Simulation Comparison Plots")
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.show()
 
         return None

@@ -162,6 +162,37 @@ class MPC_Brancher():
         return None
 
 
+    def make_step_nobranch(self, x0):
+
+        assert x0.shape == (self.cqr.n_x, 1), \
+            f"x0 should have shape ({self.cqr.n_x}, 1). Shape found instead is: {x0.shape}"
+
+        prev_state = self.states
+        prev_input = self.inputs
+
+        # take the new x0 and generate new initial condition
+        current_state = np.vstack([x0.reshape((1, -1)),
+                                   self.states[:-1, :]])
+        x0_current = self._generate_initial_guess(states=current_state, inputs=prev_input)
+        prev_ic = self._generate_initial_guess(states=prev_state, inputs=prev_input)
+
+        # passing initial cond
+        self.mpc.x0 = prev_ic
+        self.mpc.set_initial_guess()
+
+        # do make step
+        u0 = self.mpc.make_step(x0=x0_current)
+
+        # push the new u0 into the new initial condition
+        if self.cqr.order > 1:
+            pseudo_input_history = np.vstack([u0.reshape((1, -1)),
+                                              self.inputs[:-1, :]])
+            self.inputs = pseudo_input_history
+        self.states = current_state
+
+        # end
+        return u0
+
 
     def make_step(self, x0, enable_plots = False):
 
@@ -225,7 +256,7 @@ class MPC_Brancher():
             self.cqr.set_initial_guess()
 
             # make branch prediction
-            branches = self.cqr.make_branch(u0_traj=u_traj_numpy)
+            branches = self.cqr.make_branch(u0_traj=u_traj_numpy.reshape((-1, self.cqr.n_u)))
 
             # storage
             if enable_plots:

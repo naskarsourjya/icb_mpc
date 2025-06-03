@@ -1,9 +1,7 @@
 import torch
 import numpy as np
-from torch.onnx.symbolic_opset9 import tensor
 from tqdm import tqdm
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from ._neuralnetwork import Regressor
@@ -176,52 +174,48 @@ class narx():
         return None
 
 
-    def setup_plot(self, height_px=700, width_px=1800):
+    def setup_plot(self, height_px=9, width_px=16):
 
         self.height_px = height_px
         self.width_px = width_px
 
         return None
 
-    def plot_narx_training_history_plotly(self):
-        # Create subplots with secondary_y set in row 2
-        fig = make_subplots(
-            rows=2, cols=1, shared_xaxes=True,
-            subplot_titles=['Loss History', 'Learning Rate'],
-            specs=[[{"secondary_y": True}], [{"secondary_y": False}]]  # Enable secondary y-axis only in row 2
-        )
 
-        fig.update_layout(title_text='NARX Training History', height=self.height_px, width=self.width_px)
-
-        # Extracting history
+    def plot_narx_training_history(self):
         train_history = self.train_history
 
-        # Plot 1: Training Loss (primary y-axis in row 1)
-        fig.add_trace(go.Scatter(x=train_history['epochs'], y=train_history['training_loss'],
-                                 mode='lines', line=dict(color='green'),
-                                 name=f'training loss',
-                                 showlegend=True),
-                      row=1, col=1)
-        fig.update_yaxes(type='log', title_text='Training Loss', row=1, col=1)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(self.width_px, self.height_px), sharex=True)
 
-        # Validation Loss (secondary y-axis in row 1)
-        fig.add_trace(go.Scatter(x=train_history['epochs'], y=train_history['validation_loss'],
-                                 mode='lines', line=dict(color='red'),
-                                 name=f'validation loss',
-                                 showlegend=True),
-                      row=1, col=1, secondary_y=True)
-        fig.update_yaxes(title_text='Validation Loss', type='log', row=1, col=1, secondary_y=True)
-        fig.update_xaxes(title_text='epochs', row=1, col=1)
+        fig.suptitle("NARX Training History")
 
-        # Plot 2: Learning Rate (row 2)
-        fig.add_trace(go.Scatter(x=train_history['epochs'], y=train_history['learning_rate'],
-                                 mode='lines', line=dict(color='blue'),
-                                 showlegend=False),
-                      row=2, col=1)
-        fig.update_yaxes(type='log', title_text='Learning Rate', row=2, col=1)
-        fig.update_xaxes(title_text='epochs', row=2, col=1)
+        # Plot 1: Training and Validation Loss with dual y-axis
+        color1 = 'green'
+        ax1.plot(train_history['epochs'], train_history['training_loss'], color=color1, label='Training Loss')
+        ax1.set_ylabel("Training Loss", color=color1)
+        ax1.set_yscale('log')
+        ax1.tick_params(axis='y', labelcolor=color1)
 
-        fig.show()
+        ax1b = ax1.twinx()  # Secondary y-axis
+        color2 = 'red'
+        ax1b.plot(train_history['epochs'], train_history['validation_loss'], color=color2, label='Validation Loss')
+        ax1b.set_ylabel("Validation Loss", color=color2)
+        ax1b.set_yscale('log')
+        ax1b.tick_params(axis='y', labelcolor=color2)
 
-        # end
+        # Legends
+        ax1.legend(loc='upper left')
+        ax1b.legend(loc='upper right')
+        ax1.set_title('Loss History')
+
+        # Plot 2: Learning Rate
+        ax2.plot(train_history['epochs'], train_history['learning_rate'], color='blue')
+        ax2.set_ylabel("Learning Rate")
+        ax2.set_xlabel("Epochs")
+        ax2.set_yscale('log')
+        ax2.set_title('Learning Rate')
+
+        plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for suptitle
+        plt.show()
+
         return None
