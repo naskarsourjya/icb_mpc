@@ -64,7 +64,7 @@ class Surrogate():
         #ref_u = model.set_variable(var_type='_u', var_name='ref_u', shape=(self.n_x, 1))
 
         # scaled input layer
-        input_layer_scaled = self.scale_input_layer(input_layer, narx.scaler)
+        output_layer = self.scale_layer(input_layer, narx.input_scaler)
 
         # reading the layers and the biases
         for i, layer in enumerate(narx.model.network):
@@ -75,23 +75,16 @@ class Surrogate():
                 weight = layer.weight.cpu().detach().numpy()
                 bias = layer.bias.cpu().detach().numpy()
 
-                if i == 0:
-                    output_layer = ca.mtimes(weight, input_layer_scaled) + bias
-
-                else:
-                    output_layer = ca.mtimes(weight, output_layer) + bias
+                output_layer = ca.mtimes(weight, output_layer) + bias
 
             elif isinstance(layer, torch.nn.Tanh):
-                if i == 0:
-                    #output_layer = ca.tanh(input_layer_scaled)
-                    output_layer = self.casadi_tanh_pytorch(input_layer_scaled)
-
-                else:
-                    #output_layer = ca.tanh(output_layer)
-                    output_layer = self.casadi_tanh_pytorch(output_layer)
+                output_layer = self.casadi_tanh_pytorch(output_layer)
 
             else:
                 raise RuntimeError('{} not supported!'.format(layer))
+
+        # scaled output layer
+        output_layer_scaled = self.scale_layer(output_layer, narx.output_scaler)
 
         # setting up rhs
         rhs_list = []
@@ -105,12 +98,11 @@ class Surrogate():
 
             # model equation
             if var_name.startswith('state') and var_name.endswith('lag_0'):
-                rhs_n = output_layer[indices[0]-1, 0]
+                rhs_n = output_layer_scaled[indices[0]-1, 0]
                 rhs_list.append(rhs_n)
                 model.set_rhs(var_name, rhs_n)
                 if verbose:
                     print(f"{var_name} <<--- {rhs_n}")
-
 
             # state shifting
             elif var_name.startswith('state'):
@@ -158,10 +150,10 @@ class Surrogate():
         return [int(num) for num in numbers]  # Convert them to integers
 
 
-    def scale_input_layer(self, input_layer, scaler):
+    def scale_layer(self, layer, scaler):
 
         if scaler == None:
-            input_layer_scaled = input_layer
+            layer_scaled = layer
 
         elif isinstance(scaler, MinMaxScaler):
 
@@ -172,21 +164,21 @@ class Surrogate():
             X_min_target = scaler.min_  # Shift factor (used for transformation)
 
             # final scaling
-            input_layer_scaled = X_min_target + X_scale * (input_layer - X_min)
+            layer_scaled = X_min_target + X_scale * (layer - X_min)
 
         elif isinstance(scaler, StandardScaler):
             mean = scaler.mean_
             std = scaler.scale_
 
             # findal scaling
-            input_layer_scaled = (input_layer - mean) / std
+            layer_scaled = (layer - mean) / std
 
         else:
             raise ValueError(f"Only MinMaxScaler and StandardScaler supported as of yet! Scaler found is {scaler}, "
                              f"which is not supported.")
 
         # end
-        return input_layer_scaled
+        return layer_scaled
 
     def create_simulator(self):
         assert self.flags['model_ready'], "do_mpc model not generated! Use narx_2_dompc_model() to generate a model."
@@ -318,7 +310,7 @@ class Surrogate():
         assert self.flags['initial_condition_ready'] == True, \
             'Surrogate model initial condition not set! Set initial condition!'
         assert u0.shape == (1, self.n_u), \
-            f'Input shape is incorrect! Expected shape is (1, {self.n_u}).'
+            f'Input shape is incorrect! Shape found is :{u0.shape}. Expected shape is :(1, {self.n_u}).'
 
         # init
         #initial_cond = self.initial_cond

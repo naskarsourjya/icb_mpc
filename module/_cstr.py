@@ -24,12 +24,12 @@ class CSTR:
         # end of init
 
     def _set_hyperparameters(self):
-        self.t_step = 0.1
+        self.t_step = 20/3600
         # range betn [0 -1]
         # increasing this reduces oscillatroy behaviou of input
         # box constraints
         self.lbx = np.array([0, 0, 145, 120])  # [lower_bound_position, lower_bound_velocity]
-        self.ubx = np.array([5, 5, 150, 170])  # [upper_bound_position, upper_bound_velocity]
+        self.ubx = np.array([5, 5, 150, 155])  # [upper_bound_position, upper_bound_velocity]
         self.lbu = np.array([5])  # [lower_bound_f_ext]
         self.ubu = np.array([35])  # [upper_bound_f_ext]
 
@@ -94,6 +94,18 @@ class CSTR:
 
         # set t_step
         simulator.set_param(t_step=self.t_step)
+
+        #simulator.scaling['_x', 'T_R'] = 100
+        #simulator.scaling['_x', 'T_j'] = 100
+        #simulator.scaling['_u', 'Q_dot'] = 2000
+        #simulator.scaling['_u', 'F'] = 100
+
+        params_simulator = {
+        'integration_tool': 'idas',
+        'abstol': 1e-10,
+        'reltol': 1e-10
+        }
+        simulator.set_param(**params_simulator)
 
         # tvp
         tvp_template = simulator.get_tvp_template()

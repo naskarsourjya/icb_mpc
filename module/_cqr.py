@@ -171,8 +171,11 @@ class cqr_narx():
         n_q = len(quantiles)
 
         # scaling data
-        scaler = StandardScaler()
-        scaler.fit(x_train)
+        input_scaler = StandardScaler()
+        input_scaler.fit(x_train)
+
+        output_scaler = StandardScaler()
+        output_scaler.fit(y_train)
 
         # creating a model for each quantile
         for quantile in quantiles:
@@ -180,7 +183,8 @@ class cqr_narx():
             # model init
             cqr_model_n = Regressor(input_size=order * (n_x + n_u),
                                     output_size=n_x,
-                                    hidden_layers=self.hidden_layers, scaler=scaler, device=self.device)
+                                    hidden_layers=self.hidden_layers, input_scaler=input_scaler,
+                                    output_scaler=output_scaler, device=self.device)
 
             # setting up optimiser for training
             optimizer = torch.optim.AdamW(cqr_model_n.parameters(), lr=self.learning_rate)
@@ -276,7 +280,8 @@ class cqr_narx():
 
         # store model
         self.cqr_model = cqr_model
-        self.scaler = scaler
+        self.input_scaler = input_scaler
+        self.output_scaler = output_scaler
         self.full_model = full_model
         self.train_history_list = train_history_list
         self.quantiles = quantiles
@@ -325,7 +330,6 @@ class cqr_narx():
         n_samples = error_calib.shape[0]
 
         # scaling calibration data
-        #x_calib_sc = self.scaler.transform(x_calib.T)
 
         # making quantile prediction
         Xi_troch = torch.tensor(x_calib.to_numpy(), dtype=self.dtype)
@@ -449,9 +453,6 @@ class cqr_narx():
             X = np.hstack([self.init_states, u0, self.init_inputs])
         else:
             X = np.hstack([self.init_states, u0])
-
-        # scaling
-        #X_scaled = self.scaler.transform(X.T)
 
         # setting default device
         self._set_device(torch_device=self.full_model.torch_device)
@@ -635,9 +636,6 @@ class cqr_narx():
         low_quantile = self.low_quantile
         high_quantile = self.high_quantile
         n_a = 1
-
-        # scaling
-        #X_scaled = self.scaler.transform(x_test.T)
 
         # setting default device
         self._set_device(torch_device=self.cqr_model.torch_device)

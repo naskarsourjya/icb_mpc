@@ -8,7 +8,7 @@ dm = DataManager(set_seed = 0)
 
 # pipeline to generate data and store
 #su.random_state_sampler(system = spring_system, n_samples=50)
-dm.random_input_sampler(system = cstr_system, n_samples=10000)
+dm.random_input_sampler(system = cstr_system, n_samples=1000)
 dm.data_splitter(order=1)
 #dm.visualize2d_data()
 #ann.store_raw_data(filename='data\spring_random_1000.pkl')

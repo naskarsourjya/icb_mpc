@@ -4,7 +4,8 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
 class Regressor(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, scaler=None, device='auto', dtype = torch.float64):
+    def __init__(self, input_size, output_size, hidden_layers, input_scaler=None, output_scaler=None, device='auto',
+                 dtype = torch.float64):
         super(Regressor, self).__init__()
 
         # Set device
@@ -32,12 +33,20 @@ class Regressor(nn.Module):
         # Store number of parameters
         self.n_params = self.count_parameters()
 
-        # Setup scaler
-        if scaler is not None:
-            self.setup_scaler(scaler)
-            self.scaler_flag = True
+        # Setup input scaler
+        if input_scaler is not None:
+            self.input_scaler = self.setup_scaler(input_scaler)
+            self.input_scaler_flag = True
         else:
-            self.scaler_flag = False
+            self.input_scaler_flag = False
+
+        # setup output scaler
+        if output_scaler is not None:
+            self.output_scaler = self.setup_scaler(output_scaler)
+            self.output_scaler_flag = True
+        else:
+            self.output_scaler_flag = False
+
 
     def setup_scaler(self, scaler):
         if isinstance(scaler, MinMaxScaler):
@@ -49,7 +58,7 @@ class Regressor(nn.Module):
             X_min_target = torch.tensor(scaler.min_, dtype=self.dtype).to(self.torch_device)  # Shift factor
 
             # Store scaler info
-            self.scaler = {
+            scaler = {
                 'scaler': scaler,
                 'X_min': X_min,
                 'X_max': X_max,
@@ -64,7 +73,7 @@ class Regressor(nn.Module):
             std = torch.tensor(scaler.scale_, dtype=self.dtype).to(self.torch_device)  # Standard deviations
 
             # Store scaler info
-            self.scaler = {
+            scaler = {
                 'scaler': scaler,
                 'mean': mean,
                 'std': std
@@ -74,34 +83,56 @@ class Regressor(nn.Module):
             raise ValueError(f"Only MinMaxScaler or StandardScaler supported as of yet! "
                              f"Scaler found is {scaler}, which is not supported.")
 
-        return None
+        return scaler
+
+
+    def scale_layer(self, scaler, x):
+
+        if isinstance(scaler['scaler'], MinMaxScaler):
+            X_min_target = scaler['X_min_target']
+            X_scale = scaler['X_scale']
+            X_min = scaler['X_min']
+            x_scaled = X_min_target + X_scale * (x - X_min)
+
+        elif isinstance(scaler['scaler'], StandardScaler):
+            mean = scaler['mean']
+            std = scaler['std']
+            x_scaled = (x - mean) / std
+
+        else:
+            raise ValueError(f"Only MinMaxScaler or StandardScaler supported as of yet! "
+                             f"Scaler found is {scaler}, which is not supported.")
+
+        return x_scaled
 
 
     def forward(self, x):
         # Ensure input tensor is on the correct device
         x = x.to(self.torch_device)
 
-        # Scaling
-        if self.scaler_flag and isinstance(self.scaler['scaler'], MinMaxScaler):
-            X_min_target = self.scaler['X_min_target']
-            X_scale = self.scaler['X_scale']
-            X_min = self.scaler['X_min']
-            x_scaled = X_min_target + X_scale * (x - X_min)
-
-        elif self.scaler_flag and isinstance(self.scaler['scaler'], StandardScaler):
-            mean = self.scaler['mean']
-            std = self.scaler['std']
-            x_scaled = (x - mean) / std
-
+        # scaling input layer
+        if self.input_scaler_flag:
+            x_scaled = self.scale_layer(scaler=self.input_scaler, x=x)
         else:
             x_scaled = x
 
+        # evaluating nn
+        unscaled_x = self.network(x_scaled)
+
+        # scaling input layer
+        if self.output_scaler_flag:
+            x_output_scaled = self.scale_layer(scaler=self.output_scaler, x=unscaled_x)
+        else:
+            x_output_scaled = unscaled_x
+
         # Forward pass through the network
-        return self.network(x_scaled)
+        return x_output_scaled
+
 
     def count_parameters(self):
         """Count the total number of weights and biases in the network."""
         return sum(p.numel() for p in self.network.parameters())
+
 
     def _set_device(self, device, dtype):
         # Auto choose GPU if available

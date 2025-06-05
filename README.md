@@ -155,6 +155,14 @@ input_1_lag_1 <<--- input_1_lag_0
 
 Inside the icbmpc algo, if the states cross boundary further away (but boundaries not exceeded in the next state), the boundaries are still constricted. Should we have a cutoff for this, to reduce iterations?
 
+# Week 20 (05/06/2025)
+
+1. remove dependence of cqr probability on per layer
+2. remove the dependence of the first point
+3. do scaling for y as well
+4. implement robust mpc with LQR gain (linearize around state)
+5. fix issue with Klatt Engell CSTR example
+
 ## todo
 
 techniques to prevent overfitting

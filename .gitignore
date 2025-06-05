@@ -172,4 +172,4 @@ cython_debug/
 
 # data directory
 data
-*.png
+matplotlib_frames/

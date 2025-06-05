@@ -80,13 +80,16 @@ class narx():
                          'epochs': []}
 
         # scaling the input
-        scaler = StandardScaler()
-        scaler.fit(x_train)
+        input_scaler = StandardScaler()
+        input_scaler.fit(x_train)
+
+        output_scaler = StandardScaler()
+        output_scaler.fit(y_train)
 
         # nn init
         narx_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
                                output_size=self.n_x, hidden_layers=self.hidden_layers,
-                               scaler=scaler, device=self.device)
+                               input_scaler=input_scaler, output_scaler=output_scaler, device=self.device)
 
         # setting up Mean Squared Error as loss function for training
         criterion = torch.nn.MSELoss()
@@ -161,7 +164,8 @@ class narx():
 
         # store model
         self.model = narx_model
-        self.scaler = scaler
+        self.input_scaler = input_scaler
+        self.output_scaler = output_scaler
         self.train_history = train_history
         self.x_label = x_train.columns
         self.y_label = y_train.columns

@@ -780,9 +780,9 @@ class DataManager(plotter):
         imageio.mimsave(gif_name, images, duration=duration)
 
         # Clean up temp files
-        #for fname in filenames:
-        #    os.remove(fname)
-        #os.rmdir(temp_dir)
+        for fname in filenames:
+            os.remove(fname)
+        os.rmdir(temp_dir)
 
         print(f"GIF saved to {gif_path}")
 
@@ -974,7 +974,7 @@ class DataManager(plotter):
             # simulation steps
             x0_real = real_simulator.make_step(u0=u0_surrogate)
             x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u0_surrogate.reshape((1, -1)))
-            x0_surrogate = surrogate_model.make_step(u0=u0_surrogate)
+            x0_surrogate = surrogate_model.make_step(u0=u0_surrogate.reshape((1, -1)))
 
             # storage
             u0_list.append(u0_surrogate.reshape((1, -1)))
