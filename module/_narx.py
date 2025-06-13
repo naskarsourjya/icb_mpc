@@ -130,7 +130,7 @@ class narx():
             for batch_X, batch_Y in train_dataloader:
 
                 # Forward pass
-                predictions = narx_model(batch_X).squeeze()
+                predictions = narx_model.evaluate(batch_X).squeeze()
                 loss = criterion(predictions, batch_Y)
 
                 # Backward pass / parameters update
@@ -145,7 +145,7 @@ class narx():
             val_loss = 0
             for batch_X, batch_Y in validation_dataloader:
                 with torch.no_grad():
-                    predictions = narx_model(batch_X).squeeze()
+                    predictions = narx_model.evaluate(batch_X).squeeze()
                     val_loss += criterion(predictions, batch_Y).item()
 
             # storing data

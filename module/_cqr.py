@@ -234,7 +234,7 @@ class cqr_narx():
                 train_loss = 0
                 for batch_X, batch_Y in train_dataloader:
                     # Forward pass
-                    Y_hat = cqr_model_n(batch_X).squeeze()
+                    Y_hat = cqr_model_n.evaluate(batch_X).squeeze()
                     loss = self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile)
 
                     # Backward pass / parameters update
@@ -249,7 +249,7 @@ class cqr_narx():
                 val_loss = 0
                 for batch_X, batch_Y in validation_dataloader:
                     with torch.no_grad():
-                        Y_hat = cqr_model_n(batch_X).squeeze()
+                        Y_hat = cqr_model_n.evaluate(batch_X).squeeze()
                         val_loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile).item()
 
                 # storing data
@@ -275,7 +275,7 @@ class cqr_narx():
         cqr_model = MergedModel(models=models, device=self.device)
 
         # inserting the mean prediction model
-        full_model_list = [self.narx] + models
+        full_model_list = [self.narx.model] + models
         full_model = MergedModel(models=full_model_list, device=self.device)
 
         # store model
@@ -300,14 +300,14 @@ class cqr_narx():
     def surrogate_error(self, narx_input, narx_output):
 
         # setting default device
-        self._set_device(torch_device=self.narx.torch_device)
+        self._set_device(torch_device=self.narx.model.torch_device)
 
         # preprosecssing
         X_torch = torch.tensor(narx_input.to_numpy(), dtype=self.dtype)
 
         # making full model prediction
         with torch.no_grad():
-            narx_pred = self.narx(X_torch).cpu().numpy()
+            narx_pred = self.narx.model.evaluate(X_torch).cpu().numpy()
 
         narx_error = narx_output-narx_pred
 
@@ -812,7 +812,7 @@ class cqr_narx():
         return None
 
 
-    def make_branch(self, u0_traj):
+    def make_branch_old(self, u0_traj):
         assert self.flags['qr_ready'], "Quantile regressor not ready."
         assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
         assert self.flags['cqr_initial_condition_ready'], "CQR not initialised"

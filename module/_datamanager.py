@@ -465,7 +465,7 @@ class DataManager(plotter):
         y_train = df[self.data['y_label']]
 
         # cqr class init
-        self.cqr = cqr_narx(narx= self.narx.model, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
+        self.cqr = cqr_narx(narx= self.narx, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
                        order=self.data['order'], t_step=self.data['t_step'], lbx=self.data['lbx'],
                             ubx=self.data['ubx'], device=device)
 
@@ -584,7 +584,7 @@ class DataManager(plotter):
         return mpc
 
     def run_simulation(self, system, iter, n_horizon, r, tightner, rnd_samples,
-                       confidence_cutoff, setpoint, max_search, store_gif=False):
+                       confidence_cutoff, setpoint, max_search, R, Q, store_gif=False):
         # init
         df = self.data['test']
         #narx_outputs = self.data['test_outputs']
@@ -607,7 +607,7 @@ class DataManager(plotter):
 
         # storage
         cqr_mpc = MPC_Brancher(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
-                                    tightner=tightner, max_search=max_search)
+                                    tightner=tightner, R=R, Q=Q, max_search=max_search)
 
         # flag update
         self.flags.update({
@@ -620,17 +620,17 @@ class DataManager(plotter):
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            cqr_mpc.states= states_history.reshape((1, -1))
-            cqr_mpc.inputs= inputs_history
+            cqr_mpc.states= states_history.reshape((-1, self.data['n_x']))
+            cqr_mpc.inputs= inputs_history.reshape((-1, self.data['n_u']))
             cqr_mpc.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_mpc.states= states_history.reshape((1, -1))
+            cqr_mpc.states= states_history.reshape((-1, self.data['n_x']))
             cqr_mpc.set_initial_guess()
 
         # extracting the most recent initial state for the data
-        x0 = states_history[:, 0].reshape((n_x, 1))
+        x0 = states_history[0, :].reshape((n_x, 1))
 
         # setting initial guess to simulator
         simulator.x0=x0
@@ -685,8 +685,8 @@ class DataManager(plotter):
 
         x0_prev = x0
         u0_prev = u0
-        reversed_states = [x0]
-        reversed_inputs = [u0]
+        reversed_states = [x0.reshape(1, -1)]
+        reversed_inputs = [u0.reshape(1, -1)]
 
         for i in range(self.data['order']-1):
 
@@ -710,6 +710,9 @@ class DataManager(plotter):
         # reversing the data
         states = list(reversed(reversed_states))
         inputs = list(reversed(reversed_inputs))
+
+        assert np.vstack(states).shape == (self.data['order'], self.data['n_x']), 'IC not found!'
+        assert np.vstack(inputs).shape == (self.data['order'], self.data['n_u']), 'IC not found!'
 
         # end
         return np.vstack(states), np.vstack(inputs)
@@ -816,7 +819,7 @@ class DataManager(plotter):
         inputs_history = inputs[1:, :]
 
         # initial cond
-        real_simulator.x0 = states_history[:, 0]
+        real_simulator.x0 = states_history[0, :].reshape((-1, 1))
         real_simulator.set_initial_guess()
 
         # setting initial guess to mpc if order > 1
@@ -902,7 +905,7 @@ class DataManager(plotter):
         return None
 
 
-    def check_simulator_mpc(self, system, iter, setpoint, n_horizon, r, tightner, confidence_cutoff, max_search):
+    def check_simulator_mpc(self, system, iter, setpoint, n_horizon, r, tightner, confidence_cutoff, max_search, R, Q):
 
         real_model = system._get_model()
         real_simulator = system._get_simulator(model=real_model)
@@ -918,7 +921,7 @@ class DataManager(plotter):
 
         # storage
         cqr_mpc = MPC_Brancher(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
-                               tightner=tightner, max_search=max_search)
+                               tightner=tightner,R=R, Q=Q, max_search=max_search)
 
         # extracting random initial point from test data
         # take initial guess from test data
@@ -934,8 +937,8 @@ class DataManager(plotter):
         inputs_history = inputs[1:, :]
 
         # initial cond
-        x0_surrogate = x0_real = states_history[:, 0].reshape((-1, 1))
-        real_simulator.x0 = states_history[:, 0]
+        x0_surrogate = x0_real = states_history[0, :].reshape((-1, 1))
+        real_simulator.x0 = x0_surrogate
         #real_mpc.x0 = states_history[0, :]
         real_simulator.set_initial_guess()
         #real_mpc.set_initial_guess()

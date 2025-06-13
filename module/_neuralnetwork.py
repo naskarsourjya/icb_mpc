@@ -86,18 +86,18 @@ class Regressor(nn.Module):
         return scaler
 
 
-    def scale_layer(self, scaler, x):
+    def scale_input_layer(self, scaler, x_unscaled):
 
         if isinstance(scaler['scaler'], MinMaxScaler):
             X_min_target = scaler['X_min_target']
             X_scale = scaler['X_scale']
             X_min = scaler['X_min']
-            x_scaled = X_min_target + X_scale * (x - X_min)
+            x_scaled = X_min_target + X_scale * (x_unscaled - X_min)
 
         elif isinstance(scaler['scaler'], StandardScaler):
             mean = scaler['mean']
             std = scaler['std']
-            x_scaled = (x - mean) / std
+            x_scaled = (x_unscaled - mean) / std
 
         else:
             raise ValueError(f"Only MinMaxScaler or StandardScaler supported as of yet! "
@@ -106,27 +106,53 @@ class Regressor(nn.Module):
         return x_scaled
 
 
-    def forward(self, x):
+    def scale_output_layer(self, scaler, x_scaled):
+
+        if isinstance(scaler['scaler'], MinMaxScaler):
+            X_min_target = scaler['X_min_target']
+            X_scale = scaler['X_scale']
+            X_min = scaler['X_min']
+            x_unscaled = (x_scaled - X_min_target)/X_scale + X_min
+
+        elif isinstance(scaler['scaler'], StandardScaler):
+            mean = scaler['mean']
+            std = scaler['std']
+            x_unscaled = x_scaled * std + mean
+
+        else:
+            raise ValueError(f"Only MinMaxScaler or StandardScaler supported as of yet! "
+                             f"Scaler found is {scaler}, which is not supported.")
+
+        return x_unscaled
+
+    def forward(self, x_scaled):
+
+        raise RuntimeError('Only for training!')
+
+        return self.network(x_scaled)
+
+
+    def evaluate(self, x):
         # Ensure input tensor is on the correct device
         x = x.to(self.torch_device)
 
         # scaling input layer
         if self.input_scaler_flag:
-            x_scaled = self.scale_layer(scaler=self.input_scaler, x=x)
+            x_scaled = self.scale_input_layer(scaler=self.input_scaler, x_unscaled=x)
         else:
             x_scaled = x
 
         # evaluating nn
-        unscaled_x = self.network(x_scaled)
+        scaled_y = self.network(x_scaled)
 
         # scaling input layer
         if self.output_scaler_flag:
-            x_output_scaled = self.scale_layer(scaler=self.output_scaler, x=unscaled_x)
+            y_output_unscaled = self.scale_output_layer(scaler=self.output_scaler, x_scaled=scaled_y)
         else:
-            x_output_scaled = unscaled_x
+            y_output_unscaled = scaled_y
 
         # Forward pass through the network
-        return x_output_scaled
+        return y_output_unscaled
 
 
     def count_parameters(self):
@@ -186,7 +212,7 @@ class MergedModel(nn.Module):
             torch.Tensor: Concatenated outputs from all models.
         """
         # listing all outputs
-        outputs = [model(x) for model in self.models]
+        outputs = [model.evaluate(x) for model in self.models]
 
         # end
         return torch.cat(outputs, dim=1)

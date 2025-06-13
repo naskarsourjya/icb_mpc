@@ -157,9 +157,9 @@ Inside the icbmpc algo, if the states cross boundary further away (but boundarie
 
 # Week 20 (05/06/2025)
 
-1. remove dependence of cqr probability on per layer
-2. remove the dependence of the first point
-3. do scaling for y as well
+1. remove dependence of cqr probability on per layer. Done
+2. remove the dependence of the first point. Done
+3. do scaling for y as well. Train with scaled values then unscale.
 4. implement robust mpc with LQR gain (linearize around state)
 5. fix issue with Klatt Engell CSTR example
 

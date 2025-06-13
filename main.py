@@ -3,12 +3,12 @@ import numpy as np
 
 # init
 default_device = 'cpu'
-cstr_system = CSTR_dompc(set_seed=0)
+system = SpringSystem(set_seed=0)
 dm = DataManager(set_seed = 0)
 
 # pipeline to generate data and store
 #su.random_state_sampler(system = spring_system, n_samples=50)
-dm.random_input_sampler(system = cstr_system, n_samples=1000)
+dm.random_input_sampler(system = system, n_samples=500)
 dm.data_splitter(order=1)
 #dm.visualize2d_data()
 #ann.store_raw_data(filename='data\spring_random_1000.pkl')
@@ -56,12 +56,16 @@ dm.train_individual_qr(alpha=0.1, hidden_layers=[2], batch_size=1000,
 #dm.cqr_mpc.plot_trials()
 #dm.plot_simulation()
 #dm.show_gif()
+R = np.array([[1]])
+Q = np.array([[1,0],[0,1]])
 
 #dm.check_simulator(system=spring_system, iter= 50)
-dm.check_simulator_mpc(system=cstr_system, iter=50, setpoint=0.008, n_horizon= 10, r= 0.01, tightner=1,
-                       confidence_cutoff=0.8, max_search=5)
-dm.run_simulation(system=cstr_system, iter=10, n_horizon=10, r=0.01, tightner=1,
-                  confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5, store_gif=True)
+dm.check_simulator_mpc(system=system, iter=50, setpoint=0.008, n_horizon= 10, r= 0.01, tightner=1,
+                       confidence_cutoff=0.8, R=R, Q=Q, max_search=5)
+
+dm.run_simulation(system=system, iter=10, n_horizon=10, r=0.01, tightner=1,
+                  confidence_cutoff=0.8, rnd_samples=7, setpoint=0.0099, max_search=5,
+                  R=R, Q=Q,  store_gif=True)
 #dm.plot_simulation()
 #dm.show_gif_matplotlib()
 
