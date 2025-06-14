@@ -172,10 +172,10 @@ class cqr_narx():
 
         # scaling data
         input_scaler = StandardScaler()
-        input_scaler.fit(x_train)
+        x_train_scaled = input_scaler.fit_transform(x_train)
 
         output_scaler = StandardScaler()
-        output_scaler.fit(y_train)
+        error_train_scaled = output_scaler.fit_transform(error_train)
 
         # creating a model for each quantile
         for quantile in quantiles:
@@ -203,8 +203,8 @@ class cqr_narx():
             self._set_device(torch_device=cqr_model_n.torch_device)
 
             # converting datasets to tensors
-            X_torch = torch.tensor(x_train.to_numpy(), dtype=self.dtype)
-            Y_torch = torch.tensor(error_train.to_numpy(), dtype=self.dtype)
+            X_torch = torch.tensor(x_train_scaled, dtype=self.dtype)
+            Y_torch = torch.tensor(error_train_scaled, dtype=self.dtype)
 
             # Create TensorDataset
             dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
@@ -234,7 +234,7 @@ class cqr_narx():
                 train_loss = 0
                 for batch_X, batch_Y in train_dataloader:
                     # Forward pass
-                    Y_hat = cqr_model_n.evaluate(batch_X).squeeze()
+                    Y_hat = cqr_model_n(batch_X).squeeze()
                     loss = self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile)
 
                     # Backward pass / parameters update
@@ -249,7 +249,7 @@ class cqr_narx():
                 val_loss = 0
                 for batch_X, batch_Y in validation_dataloader:
                     with torch.no_grad():
-                        Y_hat = cqr_model_n.evaluate(batch_X).squeeze()
+                        Y_hat = cqr_model_n(batch_X).squeeze()
                         val_loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile).item()
 
                 # storing data

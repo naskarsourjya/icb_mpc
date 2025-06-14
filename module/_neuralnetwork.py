@@ -106,7 +106,7 @@ class Regressor(nn.Module):
         return x_scaled
 
 
-    def scale_output_layer(self, scaler, x_scaled):
+    def unscale_output_layer(self, scaler, x_scaled):
 
         if isinstance(scaler['scaler'], MinMaxScaler):
             X_min_target = scaler['X_min_target']
@@ -127,7 +127,7 @@ class Regressor(nn.Module):
 
     def forward(self, x_scaled):
 
-        raise RuntimeError('Only for training!')
+        #raise RuntimeError('Only for training!')
 
         return self.network(x_scaled)
 
@@ -147,7 +147,7 @@ class Regressor(nn.Module):
 
         # scaling input layer
         if self.output_scaler_flag:
-            y_output_unscaled = self.scale_output_layer(scaler=self.output_scaler, x_scaled=scaled_y)
+            y_output_unscaled = self.unscale_output_layer(scaler=self.output_scaler, x_scaled=scaled_y)
         else:
             y_output_unscaled = scaled_y
 

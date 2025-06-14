@@ -64,7 +64,7 @@ class Surrogate():
         #ref_u = model.set_variable(var_type='_u', var_name='ref_u', shape=(self.n_x, 1))
 
         # scaled input layer
-        output_layer = self.scale_layer(input_layer, narx.input_scaler)
+        output_layer = self.scale_input_layer(input_layer, narx.input_scaler)
 
         # reading the layers and the biases
         for i, layer in enumerate(narx.model.network):
@@ -84,7 +84,7 @@ class Surrogate():
                 raise RuntimeError('{} not supported!'.format(layer))
 
         # scaled output layer
-        output_layer_scaled = self.scale_layer(output_layer, narx.output_scaler)
+        output_layer_scaled = self.unscale_output_layer(output_layer, narx.output_scaler)
 
         # setting up rhs
         rhs_list = []
@@ -149,8 +149,41 @@ class Surrogate():
         numbers = re.findall(r'\d+', var_name)  # Finds all numbers in the string
         return [int(num) for num in numbers]  # Convert them to integers
 
+    def unscale_output_layer(self, layer, scaler):
 
-    def scale_layer(self, layer, scaler):
+        if scaler == None:
+            layer_unscaled = layer
+
+        elif isinstance(scaler, MinMaxScaler):
+
+            # extracting scaler info
+            X_min = scaler.data_min_  # Minimum values of original data
+            X_max = scaler.data_max_  # Maximum values of original data
+            X_scale = scaler.scale_  # Scaling factor (1 / (X_max - X_min))
+            X_min_target = scaler.min_  # Shift factor (used for transformation)
+
+            # final scaling
+            #(x_scaled - X_min_target)/X_scale + X_min
+            #layer_unscaled = X_min_target + X_scale * (layer - X_min)
+            layer_unscaled = (layer - X_min_target)/X_scale + X_min
+
+        elif isinstance(scaler, StandardScaler):
+            mean = scaler.mean_
+            std = scaler.scale_
+
+            # findal scaling
+            layer_unscaled = layer * std + mean
+
+        else:
+            raise ValueError(f"Only MinMaxScaler and StandardScaler supported as of yet! Scaler found is {scaler}, "
+                             f"which is not supported.")
+
+        # end
+        return layer_unscaled
+
+
+
+    def scale_input_layer(self, layer, scaler):
 
         if scaler == None:
             layer_scaled = layer

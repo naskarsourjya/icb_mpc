@@ -81,10 +81,10 @@ class narx():
 
         # scaling the input
         input_scaler = StandardScaler()
-        input_scaler.fit(x_train)
+        x_train_scaled = input_scaler.fit_transform(x_train)
 
         output_scaler = StandardScaler()
-        output_scaler.fit(y_train)
+        y_train_scaled = output_scaler.fit_transform(y_train)
 
         # nn init
         narx_model = Regressor(input_size=self.order * (self.n_x + self.n_u),
@@ -104,8 +104,8 @@ class narx():
         self._set_device(torch_device= narx_model.torch_device)
 
         # converting datasets to tensors
-        X_torch = torch.tensor(x_train.to_numpy(), dtype=self.dtype)
-        Y_torch = torch.tensor(y_train.to_numpy(), dtype=self.dtype)
+        X_torch = torch.tensor(x_train_scaled, dtype=self.dtype)
+        Y_torch = torch.tensor(y_train_scaled, dtype=self.dtype)
 
         # Create TensorDataset
         dataset = torch.utils.data.TensorDataset(X_torch, Y_torch)
@@ -130,7 +130,7 @@ class narx():
             for batch_X, batch_Y in train_dataloader:
 
                 # Forward pass
-                predictions = narx_model.evaluate(batch_X).squeeze()
+                predictions = narx_model(batch_X).squeeze()
                 loss = criterion(predictions, batch_Y)
 
                 # Backward pass / parameters update
@@ -145,7 +145,7 @@ class narx():
             val_loss = 0
             for batch_X, batch_Y in validation_dataloader:
                 with torch.no_grad():
-                    predictions = narx_model.evaluate(batch_X).squeeze()
+                    predictions = narx_model(batch_X).squeeze()
                     val_loss += criterion(predictions, batch_Y).item()
 
             # storing data
