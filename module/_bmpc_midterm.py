@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 
 
-class MPC_Brancher():
-    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search, R, Q, verbose=True):
+class MPC_Brancher_midterm():
+    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search, verbose=True):
 
         # sanity checks
         assert tightner > 0, "Tightner must be greater than 0."
@@ -22,8 +22,6 @@ class MPC_Brancher():
         self.confidence_cutoff = confidence_cutoff
         self.max_search = max_search
         self.verbose = verbose
-        self.R = R
-        self.Q = Q
 
         # setup runtime
         self.setup()
@@ -196,108 +194,6 @@ class MPC_Brancher():
         # end
         return u0
 
-    def make_branch_old(self, u0_traj):
-        assert self.cqr.flags['qr_ready'], "Quantile regressor not ready."
-        assert self.cqr.flags['cqr_ready'], "Quantile regressor not conformalised."
-        assert self.cqr.flags['cqr_initial_condition_ready'], "CQR not initialised"
-        assert u0_traj.shape[1] == self.cqr.n_u, \
-            f"u0 should have have {self.cqr.n_u} columns but instead found {u0_traj.shape[1]}!"
-
-        # storage for later retrieval
-        n_x = self.cqr.n_x
-        n_u = self.cqr.n_u
-        order = self.cqr.order
-        state_n = self.cqr.states.reshape((1, -1))
-        if self.cqr.order > 1:
-            input_n = self.cqr.inputs.reshape((1, -1))
-        alpha_branch = [1]
-        time_branch = [0.0]
-        steps = u0_traj.shape[0]
-        states_branch = [self.cqr.states[0, :].reshape(1, -1)]
-
-        # generating the branches
-        for i in range(steps):
-
-            # init
-            u0 = u0_traj[i, :].reshape((1, -1))
-            n_samples = state_n.shape[0]
-
-            # segregating states and inputs
-            u0_stacked = np.vstack([u0] * n_samples)
-
-            # stacking all data
-            if self.cqr.order > 1:
-                X = np.hstack([state_n, u0_stacked, input_n])
-            else:
-                X = np.hstack([state_n, u0_stacked])
-
-            # setting default device
-            self.cqr._set_device(torch_device=self.cqr.full_model.torch_device)
-
-            # narx_input = self.cqr.input_preprocessing(states=order_states, inputs=order_inputs)
-            X_torch = torch.tensor(X, dtype=self.cqr.dtype)
-
-            # making full model prediction
-            with torch.no_grad():
-                y_pred = self.cqr.full_model(X_torch)
-
-            # doing postprocessing containing the conformalisation step
-            x0, x0_cqr_high, x0_cqr_low = self.cqr._post_processing(y=y_pred)
-
-            # finding the upper limit
-            states_3d = np.stack([x0, x0_cqr_high, x0_cqr_low], axis=0)
-
-            # finding the limits per row and col
-            max_states = np.max(states_3d, axis=0)
-            min_states = np.min(states_3d, axis=0)
-
-            # sanity check
-            assert np.all(max_states >= min_states), ("Some values of the in the max_states in < min_states, "
-                                                      "which is not expected. Should not happen if "
-                                                      "the system is monotonic.")
-
-            # generating random points between the max and the min
-            random_states = np.random.uniform(
-                low=min_states,
-                high=max_states,
-                size=(self.cqr.rnd_samples, *x0.shape)
-            )
-
-            random_states_2d = random_states.reshape((-1, self.cqr.n_x))
-
-            # stacking outputs
-            x0_next = np.vstack([x0, x0_cqr_high, x0_cqr_low, random_states_2d])
-
-            # preparing the next initial conditions
-            state_n = np.hstack([x0_next, np.vstack([state_n] * (3 + self.cqr.rnd_samples))])[:, 0:n_x * order]
-            if self.cqr.order > 1:
-                input_n = np.hstack(
-                    [np.vstack([u0] * x0_next.shape[0]), np.vstack([input_n] * (3 + self.cqr.rnd_samples))])[:,
-                          0:n_u * (order - 1)]
-
-            # stores the branched states
-            if self.cqr.confidence_cutoff == 1:
-
-                # branches not stored if confidence_cutoff = 1, equivalent to nominal mpc
-                states_branch.append(np.vstack([x0]))
-            else:
-                states_branch.append(x0_next)
-            alpha_branch.append(alpha_branch[-1] * (1 - self.cqr.alpha))
-            time_branch.append(time_branch[-1] + self.cqr.t_step)
-
-            # force cutoff is confidence is low
-            if alpha_branch[-1] < self.cqr.confidence_cutoff:
-                break
-
-        # storage
-        self.cqr.branches = {'states': states_branch,
-                             'alphas': alpha_branch,
-                             'time_stamps': time_branch,
-                             'u0_traj': u0_traj}
-
-        # end
-        return self.cqr.branches
-
 
     def make_branch(self, u0_traj):
         assert self.cqr.flags['qr_ready'], "Quantile regressor not ready."
@@ -340,11 +236,8 @@ class MPC_Brancher():
             # narx_input = self.cqr.input_preprocessing(states=order_states, inputs=order_inputs)
             X = pd.DataFrame(data=X, columns=self.cqr.narx.x_label)
 
-            # get robust input
-            X_robust = self.get_robust_input(X=X)
-
             # converting to torch
-            X_torch = torch.tensor(X_robust.to_numpy(), dtype=self.cqr.dtype)
+            X_torch = torch.tensor(X.to_numpy(), dtype=self.cqr.dtype)
 
             # making full model prediction
             with torch.no_grad():
@@ -389,8 +282,11 @@ class MPC_Brancher():
 
                 # branches not stored if confidence_cutoff = 1, equivalent to nominal mpc
                 states_branch.append(np.vstack([x0]))
+
             else:
                 states_branch.append(x0_next)
+
+            #inputs_branch.append(X_robust[input_labels].to_numpy())
             alpha_branch.append(alpha_branch[-1] * (1 - self.cqr.alpha))
             time_branch.append(time_branch[-1] + self.cqr.t_step)
 
@@ -408,51 +304,95 @@ class MPC_Brancher():
         return self.cqr.branches
 
 
-    def get_robust_input(self, X):
+    def plot_branch_matplotlib(self, t0=0.0, show_plot=True):
+        n_x = self.cqr.n_x
+        n_u = self.cqr.n_u
+        time_stamp_states = [num + t0 for num in self.cqr.branches['time_stamps']]
+        states = self.cqr.branches['states']
+        inputs = self.cqr.branches['inputs']
+        alphas = self.cqr.branches['alphas']
+        u0_traj = self.cqr.branches['u0_traj']
+        time_stamp_inputs = np.arange(t0, t0 + (self.cqr.t_step * u0_traj.shape[0]), self.cqr.t_step)[
+                            0:u0_traj.shape[0]]
 
-        # init
-        labels = X.columns
-        input_labels = [col for col in labels if col.endswith('lag_0') and col.startswith('input')]
-        state_labels = ([col for col in labels if col.startswith('state')] +
-                        [col for col in labels if col.startswith('input') and not col.endswith('lag_0')])
+        # Create subplots
+        fig, axes = plt.subplots(n_x + n_u, 1, figsize=(self.cqr.width_px, self.cqr.height_px), sharex=True)
+
+        if n_x + n_u == 1:  # If there's only one subplot, wrap axes in a list for consistency
+            axes = [axes]
+
+        # Loop through each state
+        for i in range(n_x):
+            ax = axes[i]
+            mean_prediction = []
+
+            for j, t in enumerate(time_stamp_states):
+                if j < len(time_stamp_states) - 1:
+                    # Add shaded region for confidence
+                    ax.fill_between(
+                        [time_stamp_states[j], time_stamp_states[j + 1]],
+                        [min(states[j][:, i]), min(states[j + 1][:, i])],
+                        [max(states[j][:, i]), max(states[j + 1][:, i])],
+                        color='yellow',
+                        alpha=alphas[j],
+                        label=f'Confidence' if j == 0 and i == 0 else None,
+                    )
+
+                # Scatter plot of branches
+                ax.scatter([t] * states[j][:, i].shape[0], states[j][:, i], color='pink', s=2,
+                           label='Branches' if i == 0 and j == 0 else None)
+
+                # Extracting mean prediction
+                mean_prediction.append(states[j][0, i])
 
 
-        X_0 = X.iloc[0][state_labels].to_numpy().reshape((self.cqr.n_x, 1))
-        U_O = X.iloc[0][input_labels].to_numpy().reshape((self.cqr.n_u, 1))
-        K_lqr = self.get_lqr_gain(X_0, U_O)
+            # Line plot of mean prediction
+            ax.plot(time_stamp_states, mean_prediction,
+                    linestyle='dashed', color='red', label='Nominal Projection' if i == 0 else None)
 
-        X_0_stacked = np.hstack([X_0] * X.shape[0])
-        #K_lqr_stacked = np.vstack([K_lqr] * X.shape[0])
+            ax.set_ylabel(f'State {i + 1}')
+            # ax.legend()
 
-        U_opt_n = (K_lqr @ (X[state_labels].to_numpy().reshape((-1, self.cqr.n_x)).T - X_0_stacked) +
-                   X[input_labels].to_numpy().reshape((-1, self.cqr.n_u)).T)
+        for i in range(n_u):
+            ax = axes[n_x + i]
 
-        X_robust = X.copy()
-        #X_robust[input_labels] = U_opt_n
-        for i, col in enumerate(input_labels):
-            X_robust[col] = U_opt_n[i, :]
+            for j, t in enumerate(time_stamp_inputs[:len(inputs)]):
 
-        return X_robust
+                if j < len(time_stamp_inputs[:len(inputs)]) - 1:
+                    # Add shaded region for confidence
+                    ax.fill_between(
+                        [time_stamp_states[j], time_stamp_states[j + 1]],
+                        [min(inputs[j][:, i]), min(inputs[j + 1][:, i])],
+                        [max(inputs[j][:, i]), max(inputs[j + 1][:, i])],
+                        color='yellow',
+                        alpha=alphas[j],
+                        label=f'Confidence' if j == 0 and i == 0 else None,
+                    )
 
+                # Scatter plot of branches
+                ax.scatter([t] * inputs[j][:, i].shape[0], inputs[j][:, i], color='pink', s=2,
+                           label='Branches' if i == 0 and j == 0 else None)
 
-    def get_lqr_gain(self, X_n, U_n):
+            # Line plot of input trajectory
+            ax.plot(time_stamp_inputs, u0_traj[:, i], linestyle='dashed', color='red', label='MPC trajectory')
 
-        # init
-        lqr = do_mpc.controller.LQR(model=do_mpc.model.linearize(self.mpc.model, X_n, U_n))
+            ax.set_ylabel(f'Inputs {i + 1}')
+            # ax.legend()
 
-        # setup
-        setup_lqr = {'n_horizon': None,
-                     't_step': self.mpc.settings.t_step}
-        lqr.set_param(**setup_lqr)
+        # Set x-axis labels on all plots after looping through inputs and states.
+        for ax in axes:
+            ax.set_xlabel('Times [s]')
+            ax.grid()
 
-        # setting objective
-        lqr.set_objective(Q=self.Q, R=self.R)
+        fig.suptitle("CQR State Branch Plots", fontsize=16)
 
-        # set up lqr
-        lqr.setup()
+        # Show or return the plot based on `show_plot`
+        if show_plot:
+            fig.show()
+        else:
+            plt.close(fig)
+            return fig, axes
 
-        # end
-        return lqr.K
 
     def make_step(self, x0, enable_plots = False):
 
@@ -473,7 +413,10 @@ class MPC_Brancher():
 
         # extracting and storing boundaries
         default_lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
-        default_ubx  = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
+        default_ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
+
+        default_lbu = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')
+        default_ubu = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')
 
         # debug printouts
         if self.verbose:
@@ -500,9 +443,14 @@ class MPC_Brancher():
 
             lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
+            lbu = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')
+            ubu = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_u')
+
             boundaries = {}
             boundaries['lbx'] = lbx
             boundaries['ubx'] = ubx
+            boundaries['lbu'] = lbu
+            boundaries['ubu'] = ubu
             all_boundaries.append(boundaries)
 
             # extracting optimal trajectories
@@ -521,10 +469,10 @@ class MPC_Brancher():
             # storage
             if enable_plots:
                 all_branches.append(branches)
-                plots.append(self.cqr.plot_branch_matplotlib(t0=self.t0, show_plot=False))
+                plots.append(self.plot_branch_matplotlib(t0=self.t0, show_plot=False))
 
             # adjust bounds if necessary
-            adjust_flag = self._adjust_bounds(mpc=self.mpc, branches=branches,
+            adjust_flag = self._adjust_state_bounds(mpc=self.mpc, branches=branches,
                                               default_lbx = default_lbx, default_ubx=default_ubx)
             
             # increment frame number
@@ -600,6 +548,9 @@ class MPC_Brancher():
         self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=default_ubx)
         self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_x', bnd_val=default_lbx)
 
+        self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_u', bnd_val=default_ubu)
+        self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_u', bnd_val=default_lbu)
+
         # push the new u0 into the new initial condition
         if self.cqr.order>1:
             pseudo_input_history = np.vstack([u0.reshape((1, -1)),
@@ -634,7 +585,7 @@ class MPC_Brancher():
         # end
         return u0
 
-    def _adjust_bounds(self, mpc, branches, default_lbx, default_ubx):
+    def _adjust_state_bounds(self, mpc, branches, default_lbx, default_ubx):
         # checking if all the predicted states saty inside the boundary
         # for i in range(all_states.shape[0]):
         #    current_state = all_states[i, :].reshape((1, -1))
@@ -690,10 +641,10 @@ class MPC_Brancher():
                     residue_prob_l = np.sum(binary_lower, axis=0) / states_n.shape[0]
 
                     # probabilities scaled with the cqr alpha value
-                    #upper_prob = alpha_n * residue_prob_u
-                    #lower_prob = alpha_n * residue_prob_l
-                    upper_prob_stacked = np.vstack([residue_prob_u] * states_n.shape[0])
-                    lower_prob_stacked = np.vstack([residue_prob_l] * states_n.shape[0])
+                    upper_prob = alpha_n * residue_prob_u
+                    lower_prob = alpha_n * residue_prob_l
+                    upper_prob_stacked = np.vstack([upper_prob] * states_n.shape[0])
+                    lower_prob_stacked = np.vstack([lower_prob] * states_n.shape[0])
 
                     if i == 1:
                         prob_scaled_states_u = upper_prob_stacked * residue_upper
@@ -741,78 +692,6 @@ class MPC_Brancher():
         return adjust_flag
 
 
-    def plot_trials(self, show_plot=True):
-
-        assert self.enable_plots, 'Plots storage not enabled! Set enable_plots=True in MPC_Brancher.make_step.'
-
-        # init
-        n_x = self.cqr.n_x
-        n_u = self.cqr.n_u
-        plots = self.plots
-        history = self.history
-        all_boundaries = self.all_boundaries
-        new_plots = []
-
-        for k, fig in enumerate(plots):
-            branches = self.all_branches[k]
-            boundaries = all_boundaries[k]
-            lbx = boundaries['lbx'].reshape(-1,)
-            ubx = boundaries['ubx'].reshape(-1,)
-            branch_times = history['time'] + [num + history['time'][-1] for num in branches['time_stamps']]
-
-            # add the past states
-            for i in range(n_x):
-                # making the mean prediction
-                fig.add_trace(go.Scatter(x=history['time'], y=history['x0'][i,:],
-                                         mode='lines',
-                                         line=dict(color='black', dash='solid'), name='Simulation',
-                                         showlegend=True if i==0 else False),
-                              row=i + 1, col=1)
-
-                # Add lines for system upper and lower bounds
-                fig.add_trace(go.Scatter(x=branch_times,
-                                         y=[self.cqr.ubx[i]] * len(branch_times), mode='lines',
-                                         line=dict(color='grey', dash='solid'), name='System Bounds',
-                                         showlegend=True if i == 0 else False),
-                              row=i + 1, col=1)
-                fig.add_trace(go.Scatter(x=branch_times,
-                                         y=[self.cqr.lbx[i]] * len(branch_times), mode='lines',
-                                         line=dict(color='grey', dash='solid'), name='System Bounds',
-                                         showlegend=False),
-                              row=i + 1, col=1)
-
-                # Add lines for optimised upper and lower bounds
-                fig.add_trace(go.Scatter(x=branch_times,
-                                         y=[ubx[i]] * len(branch_times), mode='lines',
-                                         line=dict(color='orange', dash='dash'), name='MPC Upper Bound',
-                                         showlegend=True if i == 0 else False),
-                              row=i + 1, col=1)
-                fig.add_trace(go.Scatter(x=branch_times,
-                                         y=[lbx[i]] * len(branch_times), mode='lines',
-                                         line=dict(color='brown', dash='dash'), name='MPC Lower Bound',
-                                         showlegend=True if i == 0 else False),
-                              row=i + 1, col=1)
-
-            for j in range(n_u):
-                # making the mean prediction
-                fig.add_trace(go.Scatter(x=history['time'], y=np.hstack([history['u0'][j,:-1], branches['u0_traj'][j,0]]),
-                                         mode='lines',
-                                         line=dict(color='black', dash='solid'),
-                                         showlegend=False),
-                              row=j + i + 2, col=1)
-
-            if show_plot:
-                fig.show()
-            else:
-                new_plots.append(fig)
-
-        # end
-        if show_plot:
-            return None
-        else:
-            return new_plots
-
-
     def plot_trials_matplotlib(self, show_plot=True):
         assert self.enable_plots, 'Plots storage not enabled! Set enable_plots=True in MPC_Brancher.make_step.'
 
@@ -830,6 +709,8 @@ class MPC_Brancher():
             boundaries = all_boundaries[k]
             lbx = boundaries['lbx'].reshape(-1, )
             ubx = boundaries['ubx'].reshape(-1, )
+            lbu = boundaries['lbu'].reshape(-1, )
+            ubu = boundaries['ubu'].reshape(-1, )
 
             branch_times = history['time'] + [num + history['time'][-1] for num in branches['time_stamps']]
 
@@ -857,13 +738,21 @@ class MPC_Brancher():
                 #ax.set_ylabel(f'State {i + 1}')
 
             # Loop through each control variable (n_u)
-            for j in range(n_u):
-                ax = axes[n_x + j]
+            for i in range(n_u):
+                ax = axes[n_x + i]
 
                 # Combine historical control inputs with the first value from branches
-                u_combined = np.hstack([history['u0'][j, :-1], branches['u0_traj'][j, 0]])
+                u_combined = np.hstack([history['u0'][i, :-1], branches['u0_traj'][i, 0]])
 
                 ax.plot(history['time'], u_combined, color='black', linestyle='solid')
+
+                # System bounds (upper and lower)
+                ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='grey', linestyle='solid')
+                ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='grey', linestyle='solid')
+
+                # Optimized MPC bounds (upper and lower)
+                ax.plot(branch_times, [ubu[i]] * len(branch_times), color='orange', linestyle='dashed')
+                ax.plot(branch_times, [lbu[i]] * len(branch_times), color='brown', linestyle='dashed')
 
                 #ax.set_ylabel(f'Input {j + 1}')
 

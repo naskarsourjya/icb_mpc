@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 
 
 from ._graphics import plotter
-from ._bmpc import MPC_Brancher
+from ._icb_mpc import ICB_MPC
+from ._mpc_narx import MPC_NARX
 from ._narx import narx
 from ._cqr import cqr_narx
 from ._surrogate import Surrogate
@@ -355,7 +356,7 @@ class DataManager(plotter):
         return None
 
 
-    def narx_trainer(self, hidden_layers, batch_size, learning_rate, epochs= 1000,
+    def train_narx(self, hidden_layers, batch_size, learning_rate, epochs= 1000,
                      validation_split = 0.2, scheduler_flag = True, device = 'auto', lr_threshold = 1e-8):
         assert self.flags['data_stored'] == True, \
             'Data does not exist! Generate or load data!'
@@ -453,7 +454,7 @@ class DataManager(plotter):
         return None
 
 
-    def train_individual_qr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
+    def train_cqr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
                   validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8):
 
         assert self.flags['data_split'] == True, 'Split data not found!'
@@ -467,7 +468,7 @@ class DataManager(plotter):
         # cqr class init
         self.cqr = cqr_narx(narx= self.narx, alpha=alpha, n_x=self.data['n_x'], n_u=self.data['n_u'],
                        order=self.data['order'], t_step=self.data['t_step'], lbx=self.data['lbx'],
-                            ubx=self.data['ubx'], device=device)
+                            ubx=self.data['ubx'], lbu=self.data['lbu'], ubu=self.data['ubu'],  device=device)
 
         # pushing trainer settings
         self.cqr.setup_trainer(hidden_layers=hidden_layers, learning_rate=learning_rate, batch_size=batch_size,
@@ -606,7 +607,7 @@ class DataManager(plotter):
         surrogate_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r)
 
         # storage
-        cqr_mpc = MPC_Brancher(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
+        cqr_mpc = ICB_MPC(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
                                     tightner=tightner, R=R, Q=Q, max_search=max_search)
 
         # flag update
@@ -795,49 +796,53 @@ class DataManager(plotter):
         return None
 
 
-    def check_simulator(self, system, iter):
+    def check_simulator(self, system, iter, x_init=None, u_init=None):
 
+        # init
+        order = self.data['order']
+        n_x = self.data['n_x']
+
+        # real model and simulator
         real_model = system._get_model()
         real_simulator = system._get_simulator(model=real_model)
 
+        # extracting the pre trained cqr model
         cqr_model = self.cqr
 
         self.narx_2_dompc()
         surrogate_model = self.surrogate
 
-        # extracting random initial point from test data
-        # take initial guess from test data
-        df = self.data['test']
-        narx_inputs = df[self.data['x_label']]
-        n_x = self.data['n_x']
-        n_u = self.data['n_u']
-        order = self.data['order']
-        rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
+        # random initial point is extracted if initial state not provided
+        if x_init is None:
 
-        # generate a new ic
-        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
-        inputs_history = inputs[1:, :]
+            # generate a new ic
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
+            inputs_history = inputs[0:-1, :]
 
-        # initial cond
-        real_simulator.x0 = states_history[0, :].reshape((-1, 1))
+            # saving the new initial conditions
+            x_init = states_history
+            u_init = inputs_history
+
+        # initial cond for the real simulator
+        real_simulator.x0 = x_init[0, :]
         real_simulator.set_initial_guess()
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            cqr_model.states = states_history
-            cqr_model.inputs = inputs_history
+            cqr_model.states = x_init
+            cqr_model.inputs = u_init
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history
-            surrogate_model.inputs = inputs_history
+            surrogate_model.states = x_init
+            surrogate_model.inputs = u_init
             surrogate_model.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_model.states = states_history.reshape((-1, self.data['n_x']))
+            cqr_model.states = x_init
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history.reshape((-1, self.data['n_x']))
+            surrogate_model.states = x_init
             surrogate_model.set_initial_guess()
 
         # main loop
@@ -905,73 +910,76 @@ class DataManager(plotter):
         return None
 
 
-    def check_simulator_mpc(self, system, iter, setpoint, n_horizon, r, tightner, confidence_cutoff, max_search, R, Q):
+    def check_simulator_mpc(self, system, iter, setpoint, n_horizon, r, x_init=None, u_init=None):
 
-        real_model = system._get_model()
-        real_simulator = system._get_simulator(model=real_model)
-        #real_mpc = system._get_mpc(model= real_model, n_horizon= n_horizon, setpoint= setpoint, r= r)
-        u0_list = []
-
-        cqr_model = self.cqr
-
-        self.narx_2_dompc()
-        surrogate_model = self.surrogate
-
-        surrogate_mpc = self.step_state_mpc(model=self.surrogate.model, setpoint=setpoint, n_horizon=n_horizon, r=r)
-
-        # storage
-        cqr_mpc = MPC_Brancher(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
-                               tightner=tightner,R=R, Q=Q, max_search=max_search)
-
-        # extracting random initial point from test data
-        # take initial guess from test data
-        df = self.data['test']
-        narx_inputs = df[self.data['x_label']]
+        # init
         n_x = self.data['n_x']
         n_u = self.data['n_u']
         order = self.data['order']
-        rnd_col = np.random.randint(narx_inputs.shape[1])  # Select a random column index
+        u0_list = []
 
-        # generate a new ic
-        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
-        inputs_history = inputs[1:, :]
+        # real model and simulator
+        real_model = system._get_model()
+        real_simulator = system._get_simulator(model=real_model)
+
+        # extracting the pretrained cqr
+        cqr_model = self.cqr
+
+        # generating the surrogate model
+        self.narx_2_dompc()
+        surrogate_model = self.surrogate
+
+        # creating the mpc class with the surrogate model
+        surrogate_mpc = self.step_state_mpc(model=self.surrogate.model, setpoint=setpoint, n_horizon=n_horizon, r=r)
+
+        # wrapper class for mpc to handle NARX orders
+        mpc_sur = MPC_NARX(mpc=surrogate_mpc, n_x= n_x, n_u=n_u, order=order)
+
+        # random initial point is extracted if initial state not provided
+        if x_init is None:
+            # generate a new ic
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
+            inputs_history = inputs[0:-1, :]
+
+            # saving the new initial conditions
+            x_init = states_history
+            u_init = inputs_history
 
         # initial cond
-        x0_surrogate = x0_real = states_history[0, :].reshape((-1, 1))
-        real_simulator.x0 = x0_surrogate
-        #real_mpc.x0 = states_history[0, :]
+        x0_real = x_init[0, :].reshape((-1, 1))
+        real_simulator.x0 = x0_real
         real_simulator.set_initial_guess()
         #real_mpc.set_initial_guess()
 
         # setting initial guess to mpc if order > 1
         if order > 1:
-            cqr_model.states = states_history.reshape((1, -1))
-            cqr_model.inputs = inputs_history.reshape((1, -1))
+            cqr_model.states = x_init
+            cqr_model.inputs = u_init
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history.reshape((1, -1))
-            surrogate_model.inputs = inputs_history.reshape((1, -1))
+            surrogate_model.states = x_init
+            surrogate_model.inputs = u_init
             surrogate_model.set_initial_guess()
 
-            cqr_mpc.states = states_history.reshape((1, -1))
-            cqr_mpc.inputs = inputs_history.reshape((1, -1))
-            cqr_mpc.set_initial_guess()
+            mpc_sur.states = x_init
+            mpc_sur.inputs = u_init
+            mpc_sur.set_initial_guess()
 
         # setting initial guess to mpc if order == 1
         else:
-            cqr_model.states = states_history.reshape((1, -1))
+            cqr_model.states = x_init
             cqr_model.set_initial_guess()
 
-            surrogate_model.states = states_history.reshape((1, -1))
+            surrogate_model.states = x_init
             surrogate_model.set_initial_guess()
 
-            cqr_mpc.states = states_history.reshape((1, -1))
-            cqr_mpc.set_initial_guess()
+            mpc_sur.states = x_init
+            mpc_sur.set_initial_guess()
 
         # main loop
         for _ in range(iter):
             # random input inside the input boundaries
-            u0_surrogate = cqr_mpc.make_step_nobranch(x0=x0_real)
+            u0_surrogate = mpc_sur.make_step(x0=x0_real)
             #u0_real = real_mpc.make_step(x0= x0_real)
 
             # simulation steps

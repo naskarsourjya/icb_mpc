@@ -181,6 +181,7 @@ class CSTR_dompc:
         # setting up upper boundaries for the states
         mpc.bounds['upper', '_x', 'C_a'] = 2
         mpc.bounds['upper', '_x', 'C_b'] = 2
+        mpc.bounds['upper', '_x', 'T_R'] = 140
         mpc.bounds['upper', '_x', 'T_K'] = 140
 
         # setting up lower boundaries for the inputs
@@ -194,7 +195,7 @@ class CSTR_dompc:
         # Instead of having a regular bound on T_R:
         # mpc.bounds['upper', '_x', 'T_R'] = 140
         # We can also have soft constraints as part of the set_nl_cons method:
-        mpc.set_nl_cons('T_R', model.x['T_R'], ub=140, soft_constraint=True, penalty_term_cons=1e2)
+        #mpc.set_nl_cons('T_R', model.x['T_R'], ub=140, soft_constraint=True, penalty_term_cons=1e2)
 
         # setting up parameter uncertainty
         alpha_var = np.array([1., 1.05, 0.95])

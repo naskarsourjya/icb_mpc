@@ -163,6 +163,20 @@ Inside the icbmpc algo, if the states cross boundary further away (but boundarie
 4. implement robust mpc with LQR gain (linearize around nominal state only)
 5. fix issue with Klatt Engell CSTR example
 
+# Week 21
+
+1. check simulator
+2. check cqr coverage with the teset data
+
+Thesis:
+1. Abstract
+2. Introduction: Motivation, take from presentation
+3. Theory: MPC, NN, NARX, CQR, LQR; Path integral control
+4. Method: ICB MPC
+5. Results: Case Study, Discussion
+6. Conclusion
+
+
 ## todo
 
 techniques to prevent overfitting

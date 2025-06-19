@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from ._neuralnetwork import Regressor, MergedModel
 
 class cqr_narx():
-    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, device='auto', set_seed=0, debug=True, dtype=torch.float64):
+    def __init__(self, narx, alpha, n_x, n_u, order, t_step, lbx, ubx, lbu, ubu, device='auto', set_seed=0, debug=True, dtype=torch.float64):
         if set_seed is not None:
             np.random.seed(set_seed)
 
@@ -23,6 +23,8 @@ class cqr_narx():
         self.t_step = t_step
         self.lbx = lbx
         self.ubx = ubx
+        self.lbu = lbu
+        self.ubu = ubu
         self.device = device
         self._cqrstates = None
         self._cqrinputs = None
@@ -988,7 +990,7 @@ class cqr_narx():
         else:
             return fig
 
-    def plot_branch_matplotlib(self, t0=0.0, show_plot=True):
+    def plot_branch_matplotlib_old(self, t0=0.0, show_plot=True):
         n_x = self.n_x
         n_u = self.n_u
         time_stamp_states = [num + t0 for num in self.branches['time_stamps']]
