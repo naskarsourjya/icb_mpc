@@ -584,89 +584,6 @@ class DataManager(plotter):
         # end
         return mpc
 
-    def run_simulation(self, system, iter, n_horizon, r, tightner, rnd_samples,
-                       confidence_cutoff, setpoint, max_search, R, Q, store_gif=False):
-        # init
-        df = self.data['test']
-        #narx_outputs = self.data['test_outputs']
-        n_x = self.data['n_x']
-        n_u = self.data['n_u']
-        order = self.data['order']
-        all_plots = []
-
-        # system init
-        model = system._get_model()
-        simulator = system._get_simulator(model=model)
-        estimator = do_mpc.estimator.StateFeedback(model= model)
-
-        # additional config for the cqr
-        self.cqr.set_config(rnd_samples=rnd_samples, confidence_cutoff=confidence_cutoff)
-
-        # getting controller with surrogate model inside the mpc
-        surrogate_model = self.narx_2_dompc()
-        surrogate_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r)
-
-        # storage
-        cqr_mpc = ICB_MPC(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
-                                    tightner=tightner, R=R, Q=Q, max_search=max_search)
-
-        # flag update
-        self.flags.update({
-            'cqr_mpc_ready': True,
-        })
-
-        # generate a new ic
-        states_history, inputs = self._simulate_initial_guess(system=system, zero_ic = False, max_iter = 10000)
-        inputs_history = inputs[1:, :]
-
-        # setting initial guess to mpc if order > 1
-        if order > 1:
-            cqr_mpc.states= states_history.reshape((-1, self.data['n_x']))
-            cqr_mpc.inputs= inputs_history.reshape((-1, self.data['n_u']))
-            cqr_mpc.set_initial_guess()
-
-        # setting initial guess to mpc if order == 1
-        else:
-            cqr_mpc.states= states_history.reshape((-1, self.data['n_x']))
-            cqr_mpc.set_initial_guess()
-
-        # extracting the most recent initial state for the data
-        x0 = states_history[0, :].reshape((n_x, 1))
-
-        # setting initial guess to simulator
-        simulator.x0=x0
-        simulator.set_initial_guess()
-
-        # run the main loop
-        for i in range(iter):
-
-            u0 = cqr_mpc.make_step(x0, enable_plots = store_gif)
-            y0 = simulator.make_step(u0)
-            x0 = estimator.make_step(y0)
-
-            print(f"\n\n++++#### Simulation report ####++++")
-            print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
-            print(f"Input: {u0}")
-            print(f"Measurement: {y0}")
-            print(f"State Estimate: {x0}")
-            print(f"++++#### End ####++++\n\n")
-
-            if store_gif:
-                all_plots.append(cqr_mpc.plot_trials_matplotlib(show_plot=False))
-
-        # storage
-        self.simulation['simulator'] = simulator
-        self.store_gif = store_gif
-        self.all_plots = all_plots
-
-        # flag update
-        self.flags.update({
-                'simulation_ready': True,
-            })
-
-
-        return None
-
 
     def _simulate_initial_guess(self, system, zero_ic = False, max_iter = 10000000):
 
@@ -1048,4 +965,92 @@ class DataManager(plotter):
         plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.show()
 
+        return None
+
+
+    def check_icbmpc(self, system, iter, n_horizon, r, tightner, rnd_samples,
+                       confidence_cutoff, setpoint, max_search, R, Q, store_gif=False, x_init=None, u_init=None):
+        # init
+        df = self.data['test']
+        #narx_outputs = self.data['test_outputs']
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+        all_plots = []
+
+        # system init
+        model = system._get_model()
+        simulator = system._get_simulator(model=model)
+        estimator = do_mpc.estimator.StateFeedback(model= model)
+
+        # additional config for the cqr
+        self.cqr.set_config(rnd_samples=rnd_samples, confidence_cutoff=confidence_cutoff)
+
+        # getting controller with surrogate model inside the mpc
+        surrogate_model = self.narx_2_dompc()
+        surrogate_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r)
+
+        # storage
+        cqr_mpc = ICB_MPC(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
+                                    tightner=tightner, R=R, Q=Q, max_search=max_search)
+
+        # flag update
+        self.flags.update({
+            'cqr_mpc_ready': True,
+        })
+
+        # generate a new ic
+        if x_init is None:
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic = False, max_iter = 10000)
+            inputs_history = inputs[1:, :]
+
+            x_init = states_history
+            u_init = inputs_history
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            cqr_mpc.states= x_init
+            cqr_mpc.inputs= u_init
+            cqr_mpc.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            cqr_mpc.states= x_init.reshape((-1, self.data['n_x']))
+            cqr_mpc.set_initial_guess()
+
+        # extracting the most recent initial state for the data
+        x0 = x_init[0, :].reshape((n_x, 1))
+
+        # setting initial guess to simulator
+        simulator.x0=x0
+        simulator.set_initial_guess()
+
+        # run the main loop
+        for i in range(iter):
+
+            u0 = cqr_mpc.make_step(x0, enable_plots = store_gif)
+            y0 = simulator.make_step(u0)
+            x0 = estimator.make_step(y0)
+
+            print(f"\n\n++++#### Simulation report ####++++")
+            print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
+            print(f"Input: {u0}")
+            print(f"Measurement: {y0}")
+            print(f"State Estimate: {x0}")
+            print(f"++++#### End ####++++\n\n")
+
+            if store_gif:
+                all_plots.append(cqr_mpc.plot_trials_matplotlib(show_plot=False))
+
+        # storage
+        self.simulation['simulator'] = simulator
+        self.store_gif = store_gif
+        self.all_plots = all_plots
+
+        # flag update
+        self.flags.update({
+                'simulation_ready': True,
+            })
+
+        # end
         return None

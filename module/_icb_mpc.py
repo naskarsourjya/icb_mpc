@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 class ICB_MPC():
-    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search, R, Q, verbose=True, midterm_flag=True):
+    def __init__(self, mpc, cqr, tightner, confidence_cutoff, max_search, R, Q, verbose=True):
 
         # sanity checks
         assert tightner > 0, "Tightner must be greater than 0."
@@ -22,7 +22,6 @@ class ICB_MPC():
         self.confidence_cutoff = confidence_cutoff
         self.max_search = max_search
         self.verbose = verbose
-        self.midterm_flag = midterm_flag
         self.R = R
         self.Q = Q
 
@@ -242,10 +241,7 @@ class ICB_MPC():
             X = pd.DataFrame(data=X, columns=self.cqr.narx.x_label)
 
             # get robust input
-            if self.midterm_flag:
-                X_robust = X
-            else:
-                X_robust = self.get_robust_input(X=X)
+            X_robust = self.get_robust_input(X=X)
 
             # converting to torch
             X_torch = torch.tensor(X_robust.to_numpy(), dtype=self.cqr.dtype)
@@ -415,8 +411,8 @@ class ICB_MPC():
                         [col for col in labels if col.startswith('input') and not col.endswith('lag_0')])
 
 
-        X_0 = X.iloc[0][state_labels].to_numpy().reshape((self.cqr.n_x, 1))
-        U_O = X.iloc[0][input_labels].to_numpy().reshape((self.cqr.n_u, 1))
+        X_0 = X.iloc[0][state_labels].to_numpy().reshape((-1, 1))
+        U_O = X.iloc[0][input_labels].to_numpy().reshape((-1, 1))
         K_lqr = self.get_lqr_gain(X_0, U_O)
 
         X_0_stacked = np.hstack([X_0] * X.shape[0])
@@ -533,8 +529,7 @@ class ICB_MPC():
             state_adjust_flag = self._adjust_state_bounds(mpc=self.mpc, branches=branches,
                                               default_lbx = default_lbx, default_ubx=default_ubx)
 
-            if self.midterm_flag is False:
-                input_adjust_flag = self._adjust_input_bounds(mpc=self.mpc, branches=branches,
+            input_adjust_flag = self._adjust_input_bounds(mpc=self.mpc, branches=branches,
                                               default_lbu = default_lbu, default_ubu=default_ubu)
             
             # increment frame number
