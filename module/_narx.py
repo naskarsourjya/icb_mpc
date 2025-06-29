@@ -60,7 +60,7 @@ class narx():
 
 
     def setup_trainer(self, hidden_layers=[50, 50, 50], batch_size=320, learning_rate=0.01, epochs= 1000,
-                     validation_split = 0.2, scheduler_flag = True, lr_threshold = 1e-8):
+                     validation_split = 0.2, scheduler_flag = True, lr_threshold = 1e-8, train_threshold = None):
 
         self.hidden_layers = hidden_layers
         self.batch_size = batch_size
@@ -69,6 +69,7 @@ class narx():
         self.validation_split = validation_split
         self.scheduler_flag = scheduler_flag
         self.lr_threshold = lr_threshold
+        self.train_threshold = train_threshold
 
 
 
@@ -139,14 +140,14 @@ class narx():
                 optimizer.step()
 
                 # storing loss
-                train_loss += loss.item()
+                train_loss += loss.item()/len(train_dataset)
 
             # narx validation
             val_loss = 0
             for batch_X, batch_Y in validation_dataloader:
                 with torch.no_grad():
                     predictions = narx_model(batch_X).squeeze()
-                    val_loss += criterion(predictions, batch_Y).item()
+                    val_loss += criterion(predictions, batch_Y).item()/len(validation_dataset)
 
             # storing data
             train_history['training_loss'].append(train_loss)
@@ -161,6 +162,10 @@ class narx():
                 # break if training min learning rate is reached
                 if optimizer.param_groups[0]["lr"] <= self.lr_threshold:
                     break
+
+            # break if training threshold is reached
+            if self.train_threshold is not None and train_loss < self.train_threshold:
+                break
 
         # store model
         self.model = narx_model

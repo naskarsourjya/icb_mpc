@@ -59,7 +59,7 @@ class Surrogate():
                 input_layer = ca.vertcat(input_layer, var)
 
         # used by random state tracking algo
-        state_ref = model.set_variable(var_type='_tvp', var_name='state_ref', shape=(self.n_x, 1))
+        #state_ref = model.set_variable(var_type='_tvp', var_name='state_ref', shape=(self.n_x, 1))
         #ref_x = model.set_variable(var_type='_x', var_name='ref_x', shape=(self.n_x, 1))
         #ref_u = model.set_variable(var_type='_u', var_name='ref_u', shape=(self.n_x, 1))
 

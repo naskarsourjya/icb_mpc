@@ -168,13 +168,19 @@ Inside the icbmpc algo, if the states cross boundary further away (but boundarie
 1. check simulator
 2. check cqr coverage with the teset data
 
-Thesis:
-1. Abstract
-2. Introduction: Motivation, take from presentation
-3. Theory: MPC, NN, NARX, CQR, LQR; Path integral control
-4. Method: ICB MPC
-5. Results: Case Study, Discussion
-6. Conclusion
+discuss:
+1. pytorch to do-mpc translation. Is scaling needed, since the translation already has the scaler and unscaler implemented in the model itself. Done.
+2. Penalise both inputs for the cstr. the function step state mpc cannot be a generic function. It needs to be specific to the example. Pull it out to main.py instead of _datamanager.py. Done.
+
+# Week 22:
+1. reduce the time stamp, and reduce the simulation  time to 20%.
+2. Fix plot.
+3. Greedy cost function (maximze C_b)
+3. Implement the the midterm icb mpc algo
+4. Write Theory outline and sections in overleaf.
+5. Implement the multi stage mpc example
+6. Implement Klatt Engell CSTR
+
 
 
 ## todo
@@ -217,3 +223,11 @@ intorduce approach to deal with bad surrogate models and introduce the tuning kn
 compare many models, hyperparameters
 iba_mpc with poor model and improvement
 next steps, impelement parallelisation, give runtime numbers
+
+# Thesis story line
+1. Abstract
+2. Introduction: Motivation, take from presentation
+3. Theory: MPC, NN, NARX, CQR, LQR; Path integral control
+4. Method: ICB MPC
+5. Results: Case Study, Discussion
+6. Conclusion

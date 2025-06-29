@@ -207,3 +207,64 @@ class CSTR_dompc:
 
         # end
         return mpc
+
+    def _get_surrogate_mpc(self, surrogate_model, n_x, n_u, n_horizon, r, setpoint, suppress_ipopt=False):
+
+        # generating mpc class
+        mpc = do_mpc.controller.MPC(model=surrogate_model)
+
+        # supperess ipopt output
+        if suppress_ipopt:
+            mpc.settings.supress_ipopt_output()
+
+        # set t_step
+        mpc.set_param(t_step=self.t_step)
+
+        # set horizon
+        mpc.set_param(n_horizon=n_horizon)
+
+        # setting up cost function
+        # setpoint tracking
+        #mterm = (setpoint - surrogate_model.x['state_2_lag_0']) ** 2
+
+        # greedy cost function
+        mterm = -surrogate_model.x['state_2_lag_0']
+
+        # passing objective function
+        mpc.set_objective(mterm=mterm, lterm=mterm)
+
+        # input penalisation
+        mpc.set_rterm(input_1_lag_0=r, input_2_lag_0=r)
+
+        # setting up boundaries for mpc states
+        for i in range(n_x):
+            mpc.bounds['lower', '_x', f'state_{i + 1}_lag_0'] = self.lbx[i]
+            mpc.bounds['upper', '_x', f'state_{i + 1}_lag_0'] = self.ubx[i]
+
+        # setting up boundaries for mpc inputs
+        for j in range(n_u):
+            mpc.bounds['lower', '_u', f'input_{j + 1}_lag_0'] = self.lbu[j]
+            mpc.bounds['upper', '_u', f'input_{j + 1}_lag_0'] = self.ubu[j]
+
+        # enter random setpoints inside the box constraints
+        tvp_template = mpc.get_tvp_template()
+
+        # sending random setpoints inside box constraints
+        def tvp_fun(t_ind):
+            #range_x = self.data['ubx'] - self.data['lbx']
+            #tvp_template['_tvp', :, 'state_ref'] = np.array([[-0.8], [0]])
+            #if t_ind<self.data['t_step']*iter/2:
+            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + step_mag * range_x
+
+            #else:
+            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + (1-step_mag) * range_x
+
+            return tvp_template
+
+        mpc.set_tvp_fun(tvp_fun)
+
+        # setup
+        mpc.setup()
+
+        # end
+        return mpc

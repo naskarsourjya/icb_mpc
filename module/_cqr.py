@@ -132,7 +132,8 @@ class cqr_narx():
 
 
     def setup_trainer(self, hidden_layers=[50, 50, 50], learning_rate=0.1, batch_size=32,
-                            validation_split=0.2, scheduler_flag=True, epochs=1000, lr_threshold=1e-8):
+                            validation_split=0.2, scheduler_flag=True, epochs=1000, lr_threshold=1e-8,
+                      train_threshold= None):
 
         self.hidden_layers = hidden_layers
         self.learning_rate = learning_rate
@@ -141,6 +142,7 @@ class cqr_narx():
         self.scheduler_flag = scheduler_flag
         self.epochs = epochs
         self.lr_threshold = lr_threshold
+        self.train_threshold = train_threshold
 
         return None
 
@@ -153,7 +155,7 @@ class cqr_narx():
         return None
 
 
-    def train_individual_qr(self, x_train, y_train):
+    def train(self, x_train, y_train):
 
         # computing calibration error
         error_train = self.surrogate_error(narx_input=x_train, narx_output=y_train)
@@ -245,14 +247,14 @@ class cqr_narx():
                     optimizer.step()
 
                     # storing loss
-                    train_loss += loss.item()
+                    train_loss += loss.item()/len(train_dataset)
 
                 # narx validation
                 val_loss = 0
                 for batch_X, batch_Y in validation_dataloader:
                     with torch.no_grad():
                         Y_hat = cqr_model_n(batch_X).squeeze()
-                        val_loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile).item()
+                        val_loss += self._pinball_loss(y=batch_Y, y_hat=Y_hat, quantile=quantile).item()/len(validation_dataset)
 
                 # storing data
                 train_history['quantile'].append(quantile)
@@ -268,6 +270,10 @@ class cqr_narx():
                     # break if training min learning rate is reached
                     if optimizer.param_groups[0]["lr"] <= self.lr_threshold:
                         break
+
+                # break if training threshold is reached
+                if self.train_threshold is not None and train_loss < self.train_threshold:
+                    break
 
             # storage
             models.append(cqr_model_n)

@@ -10,7 +10,7 @@ system = CSTR_dompc(set_seed=0)
 ## setting seed for repeatability
 dm = DataManager(set_seed = 0)
 
-# geenreate data
+# generate data
 dm.random_input_sampler(system = system, n_samples=500)
 
 # set order and split data accordingly

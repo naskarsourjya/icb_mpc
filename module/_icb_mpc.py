@@ -509,7 +509,7 @@ class ICB_MPC():
 
             # extracting optimal trajectories
             u_traj = self.mpc.opt_x_num['_u']
-            u_traj_numpy = np.array([entry[0][0].full().flatten() for entry in u_traj])
+            u_traj_numpy = np.array([entry[0].full().flatten() for entry in u_traj])
 
             # setting up cqr
             self.cqr.states = current_state
@@ -558,6 +558,8 @@ class ICB_MPC():
                     print(f"surrogate predicted optimal next state: {branches['states'][1][0, :]}")
                     print(f"initial state: {branches['states'][0]}")
                     print()
+                    print('Printing branches form cqr')
+                    print(self.cqr.branches['u0_traj'])
                     print(f"-------- Success! Feasible input found. --------\n\n")
 
                 break
@@ -580,6 +582,8 @@ class ICB_MPC():
                     print(f"surrogate predicted next state: {branches['states'][1][0, :]}")
                     print(f"initial state: {branches['states'][0]}")
                     print()
+                    print('Printing branches form cqr')
+                    print(self.cqr.branches['u0_traj'])
                     print(f"-------- Max interation reached and feasible input not found! Last calculated input returned. --------\n\n")
 
             else:
@@ -600,6 +604,8 @@ class ICB_MPC():
                     print(f"surrogate predicted next state: {branches['states'][1][0, :]}")
                     print(f"initial state: {branches['states'][0]}")
                     print()
+                    print('Printing branches form cqr')
+                    print(self.cqr.branches['u0_traj'])
                     print(
                         f"---- Feasible input not found! Recalculating again. ---->>>>\n\n")
 
@@ -911,7 +917,7 @@ class ICB_MPC():
                 ax = axes[n_x + i]
 
                 # Combine historical control inputs with the first value from branches
-                u_combined = np.hstack([history['u0'][i, :-1], branches['u0_traj'][i, 0]])
+                u_combined = np.hstack([history['u0'][i, :-1], branches['u0_traj'][0, i]])
 
                 ax.plot(history['time'], u_combined, color='black', linestyle='solid')
 

@@ -357,7 +357,8 @@ class DataManager(plotter):
 
 
     def train_narx(self, hidden_layers, batch_size, learning_rate, epochs= 1000,
-                     validation_split = 0.2, scheduler_flag = True, device = 'auto', lr_threshold = 1e-8):
+                     validation_split = 0.2, scheduler_flag = True, device = 'auto', lr_threshold = 1e-8,
+                   train_threshold=None):
         assert self.flags['data_stored'] == True, \
             'Data does not exist! Generate or load data!'
 
@@ -370,7 +371,8 @@ class DataManager(plotter):
 
         self.narx.setup_trainer(hidden_layers=hidden_layers, batch_size=batch_size,
                                 learning_rate=learning_rate, epochs=epochs, validation_split=validation_split,
-                                scheduler_flag=scheduler_flag, lr_threshold=lr_threshold)
+                                scheduler_flag=scheduler_flag, lr_threshold=lr_threshold,
+                                train_threshold=train_threshold)
 
         self.narx.train(x_train=x_train, y_train=y_train)
 
@@ -455,7 +457,8 @@ class DataManager(plotter):
 
 
     def train_cqr(self, alpha, hidden_layers, device = 'auto', learning_rate= 0.1, batch_size= 32,
-                  validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8):
+                  validation_split= 0.2, scheduler_flag= True, epochs = 1000, lr_threshold = 1e-8,
+                  train_threshold = None):
 
         assert self.flags['data_split'] == True, 'Split data not found!'
         assert 0 < alpha < 1, "All alpha must be between 0 and 1"
@@ -473,10 +476,10 @@ class DataManager(plotter):
         # pushing trainer settings
         self.cqr.setup_trainer(hidden_layers=hidden_layers, learning_rate=learning_rate, batch_size=batch_size,
                           validation_split=validation_split, scheduler_flag=scheduler_flag, epochs=epochs,
-                          lr_threshold=lr_threshold)
+                          lr_threshold=lr_threshold, train_threshold=train_threshold)
 
         # pushing data
-        self.cqr.train_individual_qr(x_train=x_train, y_train=y_train)
+        self.cqr.train(x_train=x_train, y_train=y_train)
 
         # calibration data
         df = self.data['cqr_calibration']
@@ -512,77 +515,6 @@ class DataManager(plotter):
         self.cqr.plot_cqr_error(x_test= x_test, y_test=y_test, t_test=t_test)
 
         return None
-
-
-    def step_state_mpc(self, model, n_horizon, r, setpoint, suppress_ipopt=False):
-
-        # init
-        n_x = self.data['n_x']
-        n_u = self.data['n_u']
-        order =self.data['order']
-        narx_state_length = order * n_x + (order - 1) * n_u
-
-        # states of system
-        x = model.x.master[0:n_x]
-        x_ref = model.tvp['state_ref']
-
-        # generating mpc class
-        mpc = do_mpc.controller.MPC(model=model)
-
-        # supperess ipopt output
-        if suppress_ipopt:
-            mpc.settings.supress_ipopt_output()
-
-        # set t_step
-        mpc.set_param(t_step=self.data['t_step'])
-
-        # set horizon
-        mpc.set_param(n_horizon=n_horizon)
-
-        # setting up cost function
-        #mterm = sum([(x_ref[i]-x[i])**2 for i in range(n_x)])
-        #mterm = (x_ref[0] - x[0]) ** 2 # tracking only the  first state
-        mterm = (setpoint -x[0]) ** 2
-        #mterm = (0 - x[0]) ** 2
-
-        # passing objective function
-        mpc.set_objective(mterm=mterm, lterm=mterm)
-
-        # input penalisation
-        mpc.set_rterm(input_1_lag_0=r)
-
-        # setting up boundaries for mpc states
-        for i in range(self.data['n_x']):
-            mpc.bounds['lower', '_x', f'state_{i + 1}_lag_0'] = self.data['lbx'][i]
-            mpc.bounds['upper', '_x', f'state_{i + 1}_lag_0'] = self.data['ubx'][i]
-
-        # setting up boundaries for mpc inputs
-        for j in range(self.data['n_u']):
-            mpc.bounds['lower', '_u', f'input_{j + 1}_lag_0'] = self.data['lbu'][j]
-            mpc.bounds['upper', '_u', f'input_{j + 1}_lag_0'] = self.data['ubu'][j]
-
-        # enter random setpoints inside the box constraints
-        tvp_template = mpc.get_tvp_template()
-
-        # sending random setpoints inside box constraints
-        def tvp_fun(t_ind):
-            #range_x = self.data['ubx'] - self.data['lbx']
-            #tvp_template['_tvp', :, 'state_ref'] = np.array([[-0.8], [0]])
-            #if t_ind<self.data['t_step']*iter/2:
-            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + step_mag * range_x
-
-            #else:
-            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + (1-step_mag) * range_x
-
-            return tvp_template
-
-        mpc.set_tvp_fun(tvp_fun)
-
-        # setup
-        mpc.setup()
-
-        # end
-        return mpc
 
 
     def _simulate_initial_guess(self, system, zero_ic = False, max_iter = 10000000):
@@ -847,7 +779,8 @@ class DataManager(plotter):
         surrogate_model = self.surrogate
 
         # creating the mpc class with the surrogate model
-        surrogate_mpc = self.step_state_mpc(model=self.surrogate.model, setpoint=setpoint, n_horizon=n_horizon, r=r)
+        surrogate_mpc = system._get_surrogate_mpc(surrogate_model=self.surrogate.model, n_x=n_x,
+                                                  n_u=n_u, setpoint=setpoint, n_horizon=n_horizon, r=r)
 
         # wrapper class for mpc to handle NARX orders
         mpc_sur = MPC_NARX(mpc=surrogate_mpc, n_x= n_x, n_u=n_u, order=order)
@@ -988,7 +921,10 @@ class DataManager(plotter):
 
         # getting controller with surrogate model inside the mpc
         surrogate_model = self.narx_2_dompc()
-        surrogate_mpc = self.step_state_mpc(model=surrogate_model, setpoint=setpoint, n_horizon=n_horizon, r=r)
+
+        # creating the mpc class with the surrogate model
+        surrogate_mpc = system._get_surrogate_mpc(surrogate_model=surrogate_model, n_x=n_x,
+                                                  n_u=n_u, setpoint=setpoint, n_horizon=n_horizon, r=r)
 
         # storage
         cqr_mpc = ICB_MPC(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
