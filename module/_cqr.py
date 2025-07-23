@@ -288,6 +288,8 @@ class cqr_narx():
 
         # store model
         self.cqr_model = cqr_model
+        self.cqr_high_model = models[0]
+        self.cqr_low_model = models[1]
         self.input_scaler = input_scaler
         self.output_scaler = output_scaler
         self.full_model = full_model

@@ -309,7 +309,7 @@ class MPC_Brancher_midterm():
         n_u = self.cqr.n_u
         time_stamp_states = [num + t0 for num in self.cqr.branches['time_stamps']]
         states = self.cqr.branches['states']
-        inputs = self.cqr.branches['inputs']
+        #inputs = self.cqr.branches['inputs']
         alphas = self.cqr.branches['alphas']
         u0_traj = self.cqr.branches['u0_traj']
         time_stamp_inputs = np.arange(t0, t0 + (self.cqr.t_step * u0_traj.shape[0]), self.cqr.t_step)[
@@ -355,23 +355,6 @@ class MPC_Brancher_midterm():
 
         for i in range(n_u):
             ax = axes[n_x + i]
-
-            for j, t in enumerate(time_stamp_inputs[:len(inputs)]):
-
-                if j < len(time_stamp_inputs[:len(inputs)]) - 1:
-                    # Add shaded region for confidence
-                    ax.fill_between(
-                        [time_stamp_states[j], time_stamp_states[j + 1]],
-                        [min(inputs[j][:, i]), min(inputs[j + 1][:, i])],
-                        [max(inputs[j][:, i]), max(inputs[j + 1][:, i])],
-                        color='yellow',
-                        alpha=alphas[j],
-                        label=f'Confidence' if j == 0 and i == 0 else None,
-                    )
-
-                # Scatter plot of branches
-                ax.scatter([t] * inputs[j][:, i].shape[0], inputs[j][:, i], color='pink', s=2,
-                           label='Branches' if i == 0 and j == 0 else None)
 
             # Line plot of input trajectory
             ax.plot(time_stamp_inputs, u0_traj[:, i], linestyle='dashed', color='red', label='MPC trajectory')
@@ -440,6 +423,10 @@ class MPC_Brancher_midterm():
 
             # do make step
             u0 = self.mpc.make_step(x0=x0_current)
+
+            # extracting solver info
+            self.store_solver_stats = self.mpc.settings.store_solver_stats
+            self.solver_stats = self.mpc.solver_stats
 
             lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')

@@ -11,14 +11,17 @@ from IPython.display import display, Image
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
+import time
 
 
 from ._graphics import plotter
 from ._icb_mpc import ICB_MPC
+from ._icb_mpc_midterm import MPC_Brancher_midterm
 from ._mpc_narx import MPC_NARX
 from ._narx import narx
 from ._cqr import cqr_narx
 from ._surrogate import Surrogate
+from ._cqr2dompc import Robust_Model
 
 
 class DataManager(plotter):
@@ -51,64 +54,6 @@ class DataManager(plotter):
         }
 
         # end of init
-
-
-    def random_state_sampler(self, system, n_samples):
-        assert self.flags['data_stored'] == False, \
-            'Data already exists! Create a new object to create new trajectory.'
-
-        # setting up sysetm
-        model= system._get_model()
-        simulator = system._get_simulator(model=  model)
-        mpc = system._get_random_traj_mpc(model= model)
-        estimator = do_mpc.estimator.StateFeedback(model= model)
-
-        # random initial state
-        #x0 = np.random.uniform(system.lbx, system.ubx).reshape((model.n_x, 1))
-        x0 = self.reshape(np.random.uniform(system.lbx, system.ubx), shape=(model.n_x, 1))
-
-        simulator.x0 = x0
-        simulator.set_initial_guess()
-
-        mpc.x0 = x0
-        mpc.set_initial_guess()
-
-        data_x = [x0]
-        data_u = [np.full((model.n_u, 1), np.nan)]
-        data_t = [np.array([[0]])]
-
-        for i in tqdm(range(n_samples), desc= 'Generating data'):
-            u0 = mpc.make_step(x0)
-            y_next = simulator.make_step(u0)
-            x0 = estimator.make_step(y_next)
-
-            # check if solver was successful
-            if mpc.data['success'].reshape((-1,))[-1] == 0:
-                raise RuntimeError('do_mpc did not find a solution for the given problem!')
-
-            # data storage
-            data_x.append(x0)
-            data_u.append(u0)
-            data_t.append(data_t[-1]+ system.t_step)
-
-
-        data_x = np.concatenate(data_x, axis=1)
-        data_u = np.concatenate(data_u, axis=1)
-        data_t = np.concatenate(data_t, axis=1)
-        self.data['states'] = data_x
-        self.data['inputs'] = data_u
-        self.data['time'] = data_t
-        self.data['n_samples'] = n_samples
-        self.data['n_x'] = model.n_x
-        self.data['n_u'] = model.n_u
-        self.data['n_y'] = model.n_y
-        self.data['t_step'] = system.t_step
-
-        self.flags.update({
-            'data_stored': True,
-        })
-
-        return None
 
     def numpy_2_df(self, data_x, data_u, data_t):
 
@@ -607,10 +552,13 @@ class DataManager(plotter):
 
         return  None
 
-    def show_gif_matplotlib(self, gif_name="matplotlib_animation.gif", gif_path="", temp_dir="matplotlib_frames", duration=0.5):
+    def show_gif_matplotlib(self, system, gif_name="matplotlib_animation.gif", gif_path="", temp_dir="matplotlib_frames",
+                            duration=0.5):
         assert self.store_gif, "Create gif not enabled in run_simulation!"
 
         # init
+        model = system._get_model()
+        all_y_labels = model.x.keys() + model.u.keys()[1:] + model.aux.keys()[1:]
         all_plots = self.all_plots
         i = 0
         filenames = []
@@ -622,6 +570,11 @@ class DataManager(plotter):
         for plots in tqdm(all_plots, desc="Storing plots"):
             for matplots in plots:
                 fig, axes = matplots
+
+                for jj, ax in enumerate(axes):
+
+                    ax.set_ylabel(all_y_labels[jj])
+
                 filename = os.path.join(temp_dir, f"frame_{i:03d}.png")
                 fig.savefig(filename)
                 filenames.append(filename)
@@ -834,8 +787,8 @@ class DataManager(plotter):
 
             # simulation steps
             x0_real = real_simulator.make_step(u0=u0_surrogate)
-            x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u0_surrogate.reshape((1, -1)))
-            x0_surrogate = surrogate_model.make_step(u0=u0_surrogate.reshape((1, -1)))
+            #x0_cqr, x0_cqr_high, x0_cqr_low = cqr_model.make_step(u0=u0_surrogate.reshape((1, -1)))
+            #x0_surrogate = surrogate_model.make_step(u0=u0_surrogate.reshape((1, -1)))
 
             # storage
             u0_list.append(u0_surrogate.reshape((1, -1)))
@@ -866,11 +819,11 @@ class DataManager(plotter):
                     label='Real Simulation' if i == 0 else "")
 
             # CQR Nominal
-            ax.plot(time, cqr_model.history['x0_cqr'][:, i], color='green', label='CQR Nominal' if i == 0 else "")
+            #ax.plot(time, cqr_model.history['x0_cqr'][:, i], color='green', label='CQR Nominal' if i == 0 else "")
 
             # Surrogate
-            ax.plot(surrogate_model.history['time'], surrogate_model.history['x0'][:, i], color='yellow',
-                    label='Surrogate' if i == 0 else "")
+            #ax.plot(surrogate_model.history['time'], surrogate_model.history['x0'][:, i], color='yellow',
+            #        label='Surrogate' if i == 0 else "")
 
             # System bounds (upper and lower)
             ax.plot(real_simulator.data['_time'], [self.cqr.ubx[i]] * real_simulator.data['_time'].shape[0], color='grey', linestyle='solid',
@@ -901,7 +854,7 @@ class DataManager(plotter):
         return None
 
 
-    def check_icbmpc(self, system, iter, n_horizon, r, tightner, rnd_samples,
+    def case_study_1(self, system, iter, n_horizon, r, tightner, rnd_samples,
                        confidence_cutoff, setpoint, max_search, R, Q, store_gif=False, x_init=None, u_init=None):
         # init
         df = self.data['test']
@@ -910,6 +863,8 @@ class DataManager(plotter):
         n_u = self.data['n_u']
         order = self.data['order']
         all_plots = []
+        closed_loop_cost = []
+        opt_success = []
 
         # system init
         model = system._get_model()
@@ -961,12 +916,17 @@ class DataManager(plotter):
         simulator.x0=x0
         simulator.set_initial_guess()
 
+        start_time = time.time()
+
         # run the main loop
         for i in range(iter):
 
             u0 = cqr_mpc.make_step(x0, enable_plots = store_gif)
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)
+
+            closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            opt_success.append(cqr_mpc.solver_stats['success'])
 
             print(f"\n\n++++#### Simulation report ####++++")
             print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
@@ -978,6 +938,10 @@ class DataManager(plotter):
             if store_gif:
                 all_plots.append(cqr_mpc.plot_trials_matplotlib(show_plot=False))
 
+        end_time = time.time()
+
+        violation_flag = self._check_boundary__violation(system=system, simulator=simulator)
+
         # storage
         self.simulation['simulator'] = simulator
         self.store_gif = store_gif
@@ -988,5 +952,489 @@ class DataManager(plotter):
                 'simulation_ready': True,
             })
 
+        end_time = time.time()
+
+        # pass through
+        self.cs1_results = {'Type': 'cs1',
+                            'OptimizerSuccess': all(opt_success),
+                       'ClosedLoopCost': sum(closed_loop_cost) / len(closed_loop_cost),
+                       'BoundaryViolation': violation_flag,
+                       'Iterations': iter,
+                       'MpcHorizon': n_horizon,
+                       'InputCost': r,
+                       'Tightner': tightner,
+                       'RandomSampling':rnd_samples,
+                       'ConfidenceCutoff': confidence_cutoff,
+                       'setpoint': setpoint,
+                       'MaxSearch':max_search,
+                            'Time': end_time-start_time}
+        #(self, system, iter, n_horizon, r, tightner, rnd_samples, confidence_cutoff, setpoint, max_search, R, Q, store_gif=False, x_init=None, u_init=None)
+        # end
+        return self.cs1_results
+
+
+    def _check_boundary__violation(self, system, simulator):
+
+        n_sampes = len(simulator.data['_time'])
+        ubx_stacked = np.vstack([system.ubx]*n_sampes)
+        lbx_stacked = np.vstack([system.lbx] * n_sampes)
+        ubu_stacked = np.vstack([system.ubu] * n_sampes)
+        lbu_stacked = np.vstack([system.lbu] * n_sampes)
+
+        if np.all(simulator.data['_x']>=lbx_stacked) and np.all(simulator.data['_x']<=ubx_stacked) and np.all(simulator.data['_u']>=lbu_stacked) and np.all(simulator.data['_u']<=ubu_stacked):
+            return False
+        else:
+            return True
+
+
+
+    def setup_case_study_2(self, hidden_layers, system, setpoint, n_horizon, r, epochs= 1000, batch_size=1000,
+                     learning_rate=0.1, validation_split=0.2,
+                     scheduler_flag= True, device='auto', lr_threshold = 1e-8, train_threshold= None):
+
+        assert self.flags['data_stored'] == True, \
+            'Data does not exist! Generate or load data!'
+
+        # init
+        df_names = ['narx_train', 'cqr_train', 'cqr_calibration']
+        df_list = []
+
+        # sxtracting all datasets
+        for dataset_name in df_names:
+            df = self.data[dataset_name]
+            df_list.append(df)
+
+        # combine all dataframes
+        combined_df = pd.concat(df_list, ignore_index=True)
+
+        # extract training data
+        x_train = combined_df[self.data['x_label']]
+        y_train = combined_df[self.data['y_label']]
+
+        # init narx model
+        narx_model = narx(n_x=self.data['n_x'], n_u=self.data['n_u'], order=self.data['order'],
+                         t_step=self.data['t_step'], set_seed=self.set_seed, device=device)
+
+        # setup training parameters
+        narx_model.setup_trainer(hidden_layers=hidden_layers, batch_size=batch_size,
+                                learning_rate=learning_rate, epochs=epochs, validation_split=validation_split,
+                                scheduler_flag=scheduler_flag, lr_threshold=lr_threshold,
+                                train_threshold=train_threshold)
+
+        # train model
+        narx_model.train(x_train=x_train, y_train=y_train)
+
+        # plot the training performance
+        narx_model.plot_narx_training_history()
+
+        # init surrogate model
+        surrogate_model = Surrogate(n_x=self.data['n_x'], n_u=self.data['n_u'],
+                                   order=self.data['order'], t_step=self.data['t_step'])
+
+        # create dompc surrogate model
+        surrogate_model_dompc = surrogate_model.narx_2_dompc_model(narx=narx_model)
+
+        # creating the mpc class with the surrogate model
+        surrogate_mpc = system._get_surrogate_mpc(surrogate_model=surrogate_model_dompc, n_x=self.data['n_x'],
+                                                  n_u=self.data['n_u'], setpoint=setpoint, n_horizon=n_horizon, r=r)
+
+        # wrapper class for mpc to handle NARX orders
+        self.cs2_surrogate = MPC_NARX(mpc=surrogate_mpc, n_x=self.data['n_x'], n_u=self.data['n_u'], order=self.data['order'])
+
+        # preformance
+        self.cs2_results = {'Type': 'cs2',
+                            'MpcHorizon': n_horizon,
+                       'InputCost': r,
+                       'setpoint': setpoint}
+
         # end
         return None
+
+
+    def case_study_2(self, system, iter, x_init=None, u_init=None):
+
+        # init
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+        mpc_sur = self.cs2_surrogate
+        closed_loop_cost = []
+        opt_success = []
+
+        # real model and simulator
+        real_model = system._get_model()
+        real_simulator = system._get_simulator(model=real_model)
+
+        # random initial point is extracted if initial state not provided
+        if x_init is None:
+            # generate a new ic
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
+            inputs_history = inputs[0:-1, :]
+
+            # saving the new initial conditions
+            x_init = states_history
+            u_init = inputs_history
+
+        # initial cond
+        x0_real = x_init[0, :].reshape((-1, 1))
+        real_simulator.x0 = x0_real
+        real_simulator.set_initial_guess()
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            mpc_sur.states = x_init
+            mpc_sur.inputs = u_init
+            mpc_sur.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            mpc_sur.states = x_init
+            mpc_sur.set_initial_guess()
+
+        start_time = time.time()
+
+        # main loop
+        for _ in range(iter):
+
+            # random input inside the input boundaries
+            u0_surrogate = mpc_sur.make_step(x0=x0_real)
+
+            # simulation steps
+            x0_real = real_simulator.make_step(u0=u0_surrogate)
+
+            # storage
+            closed_loop_cost.append(mpc_sur.mpc.solver_stats['iterations']['obj'][-1])
+            opt_success.append(mpc_sur.mpc.solver_stats['success'])
+
+        end_time = time.time()
+
+        violation_flag = self._check_boundary__violation(system=system, simulator=real_simulator)
+
+        # storage
+        self.simulation['simulator'] = real_simulator
+
+        # flag update
+        self.flags.update({
+            'simulation_ready': True,
+        })
+
+        # pass through
+        self.cs2_results['OptimizerSuccess'] = all(opt_success)
+        self.cs2_results['ClosedLoopCost'] = sum(closed_loop_cost) / len(closed_loop_cost)
+        self.cs2_results['BoundaryViolation'] = violation_flag
+        self.cs2_results['Iterations'] = iter
+        self.cs2_results['Time'] = end_time-start_time
+
+        # end
+        return self.cs2_results
+
+
+
+    def setup_case_study_3(self, system, n_horizon, r_horizon, r, setpoint):
+
+        # init
+        robust_model_var = Robust_Model()
+
+        # convert cqr to a robust do_mpc model
+        robust_model = robust_model_var.convert2dompc(cqr=self.cqr)
+
+        robust_mpc = system._get_robust_mpc(robust_model=robust_model, n_x=self.data['n_x'], n_u=self.data['n_u'],
+                                            n_horizon= n_horizon, r_horizon=r_horizon, r=r, setpoint=setpoint)
+
+        self.robust_mpc_narx = MPC_NARX(mpc=robust_mpc, n_x=self.data['n_x'], n_u=self.data['n_u'],
+                                        order=self.data['order'])
+
+        # preformance
+        self.cs3_results = {'Type': 'cs3',
+                            'MpcHorizon': n_horizon,
+                            'InputCost': r,
+                            'setpoint': setpoint}
+
+        return None
+
+
+    def case_study_3(self, system, iter, x_init=None, u_init=None):
+
+        # init
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+        robust_mpc_narx = self.robust_mpc_narx
+        closed_loop_cost = []
+        opt_success = []
+
+        # real model and simulator
+        real_model = system._get_model()
+        real_simulator = system._get_simulator(model=real_model)
+
+        # random initial point is extracted if initial state not provided
+        if x_init is None:
+            # generate a new ic
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
+            inputs_history = inputs[0:-1, :]
+
+            # saving the new initial conditions
+            x_init = states_history
+            u_init = inputs_history
+
+        # initial cond
+        x0_real = x_init[0, :].reshape((-1, 1))
+        real_simulator.x0 = x0_real
+        real_simulator.set_initial_guess()
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            robust_mpc_narx.states = x_init
+            robust_mpc_narx.inputs = u_init
+            robust_mpc_narx.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            robust_mpc_narx.states = x_init
+            robust_mpc_narx.set_initial_guess()
+
+        start_time = time.time()
+
+        # main loop
+        for _ in range(iter):
+            # random input inside the input boundaries
+            u0_surrogate = robust_mpc_narx.make_step(x0=x0_real)
+
+            # simulation steps
+            x0_real = real_simulator.make_step(u0=u0_surrogate)
+
+            # storage
+            closed_loop_cost.append(robust_mpc_narx.mpc.solver_stats['iterations']['obj'][-1])
+            opt_success.append(robust_mpc_narx.mpc.solver_stats['success'])
+
+        end_time = time.time()
+
+        violation_flag = self._check_boundary__violation(system=system, simulator=real_simulator)
+
+        # storage
+        self.simulation['simulator'] = real_simulator
+
+        # flag update
+        self.flags.update({
+            'simulation_ready': True,
+        })
+
+        # pass through
+        self.cs3_results['OptimizerSuccess'] = all(opt_success)
+        self.cs3_results['ClosedLoopCost'] = sum(closed_loop_cost) / len(closed_loop_cost)
+        self.cs3_results['BoundaryViolation'] = violation_flag
+        self.cs3_results['Iterations'] = iter
+        self.cs3_results['Time'] = end_time-start_time
+
+        # end
+        return self.cs3_results
+
+
+    def setup_case_study_4(self, system, n_horizon, r, setpoint):
+
+        # init
+        real_model = system._get_model()
+        real_mpc = system._get_mpc(model=real_model, n_horizon=n_horizon, r=r, setpoint=setpoint)
+
+        self.cs4_mpc = MPC_NARX(mpc=real_mpc, n_x=self.data['n_x'], n_u=self.data['n_u'],
+                                        order=self.data['order'])
+
+        # preformance
+        self.cs4_results = {'Type': 'cs4',
+                            'MpcHorizon': n_horizon,
+                            'InputCost': r,
+                            'setpoint': setpoint}
+
+        return None
+
+
+    def case_study_4(self, system, iter, x_init=None, u_init=None):
+
+        # init
+        order = self.data['order']
+        cs4_mpc = self.cs4_mpc
+        closed_loop_cost = []
+        opt_success = []
+
+        # real model and simulator
+        real_model = system._get_model()
+        real_simulator = system._get_simulator(model=real_model)
+
+        # random initial point is extracted if initial state not provided
+        if x_init is None:
+            # generate a new ic
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic=False, max_iter=10000)
+            inputs_history = inputs[0:-1, :]
+
+            # saving the new initial conditions
+            x_init = states_history
+            u_init = inputs_history
+
+        # initial cond
+        x0_real = x_init[0, :].reshape((-1, 1))
+        real_simulator.x0 = x0_real
+        real_simulator.set_initial_guess()
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            cs4_mpc.states = x_init
+            cs4_mpc.inputs = u_init
+            cs4_mpc.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            cs4_mpc.states = x_init
+            cs4_mpc.set_initial_guess()
+
+        start_time = time.time()
+
+        # main loop
+        for _ in range(iter):
+            # random input inside the input boundaries
+            u0_surrogate = cs4_mpc.make_step(x0=x0_real)
+
+            # simulation steps
+            x0_real = real_simulator.make_step(u0=u0_surrogate)
+
+            # storage
+            closed_loop_cost.append(cs4_mpc.mpc.solver_stats['iterations']['obj'][-1])
+            opt_success.append(cs4_mpc.mpc.solver_stats['success'])
+
+        end_time = time.time()
+
+        violation_flag = self._check_boundary__violation(system=system, simulator=real_simulator)
+
+        # storage
+        self.simulation['simulator'] = real_simulator
+
+        # flag update
+        self.flags.update({
+            'simulation_ready': True,
+        })
+
+        # pass through
+        self.cs4_results['OptimizerSuccess'] = all(opt_success)
+        self.cs4_results['ClosedLoopCost'] = sum(closed_loop_cost) / len(closed_loop_cost)
+        self.cs4_results['BoundaryViolation'] = violation_flag
+        self.cs4_results['Iterations'] = iter
+        self.cs4_results['Time'] = end_time-start_time
+
+
+
+        # end
+        return self.cs4_results
+
+    def case_study_5(self, system, iter, n_horizon, r, tightner, rnd_samples,
+                       confidence_cutoff, setpoint, max_search, store_gif=False, x_init=None, u_init=None):
+        # init
+        df = self.data['test']
+        #narx_outputs = self.data['test_outputs']
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        order = self.data['order']
+        all_plots = []
+        closed_loop_cost = []
+        opt_success = []
+
+        # system init
+        model = system._get_model()
+        simulator = system._get_simulator(model=model)
+        estimator = do_mpc.estimator.StateFeedback(model= model)
+
+        # additional config for the cqr
+        self.cqr.set_config(rnd_samples=rnd_samples, confidence_cutoff=confidence_cutoff)
+
+        # getting controller with surrogate model inside the mpc
+        surrogate_model = self.narx_2_dompc()
+
+        # creating the mpc class with the surrogate model
+        surrogate_mpc = system._get_surrogate_mpc(surrogate_model=surrogate_model, n_x=n_x,
+                                                  n_u=n_u, setpoint=setpoint, n_horizon=n_horizon, r=r)
+
+        # storage
+        cqr_mpc = MPC_Brancher_midterm(mpc=surrogate_mpc, cqr=self.cqr, confidence_cutoff=confidence_cutoff,
+                                    tightner=tightner, max_search=max_search)
+
+        # flag update
+        self.flags.update({
+            'cqr_mpc_ready': True,
+        })
+
+        # generate a new ic
+        if x_init is None:
+            states_history, inputs = self._simulate_initial_guess(system=system, zero_ic = False, max_iter = 10000)
+            inputs_history = inputs[1:, :]
+
+            x_init = states_history
+            u_init = inputs_history
+
+        # setting initial guess to mpc if order > 1
+        if order > 1:
+            cqr_mpc.states= x_init
+            cqr_mpc.inputs= u_init
+            cqr_mpc.set_initial_guess()
+
+        # setting initial guess to mpc if order == 1
+        else:
+            cqr_mpc.states= x_init.reshape((-1, self.data['n_x']))
+            cqr_mpc.set_initial_guess()
+
+        # extracting the most recent initial state for the data
+        x0 = x_init[0, :].reshape((n_x, 1))
+
+        # setting initial guess to simulator
+        simulator.x0=x0
+        simulator.set_initial_guess()
+
+        start_time = time.time()
+
+        # run the main loop
+        for i in range(iter):
+
+            u0 = cqr_mpc.make_step(x0, enable_plots = store_gif)
+            y0 = simulator.make_step(u0)
+            x0 = estimator.make_step(y0)
+
+            closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            opt_success.append(cqr_mpc.solver_stats['success'])
+
+            print(f"\n\n++++#### Simulation report ####++++")
+            print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
+            print(f"Input: {u0}")
+            print(f"Measurement: {y0}")
+            print(f"State Estimate: {x0}")
+            print(f"++++#### End ####++++\n\n")
+
+            if store_gif:
+                all_plots.append(cqr_mpc.plot_trials_matplotlib(show_plot=False))
+
+        end_time = time.time()
+
+        violation_flag = self._check_boundary__violation(system=system, simulator=simulator)
+
+        # storage
+        self.simulation['simulator'] = simulator
+        self.store_gif = store_gif
+        self.all_plots = all_plots
+
+        # flag update
+        self.flags.update({
+                'simulation_ready': True,
+            })
+
+        # pass through
+        self.cs5_results = {'Type': 'cs5',
+                            'OptimizerSuccess': all(opt_success),
+                            'ClosedLoopCost': sum(closed_loop_cost) / len(closed_loop_cost),
+                            'BoundaryViolation': violation_flag,
+                            'Iterations': iter,
+                            'MpcHorizon': n_horizon,
+                            'InputCost': r,
+                            'Tightner': tightner,
+                            'RandomSampling': rnd_samples,
+                            'ConfidenceCutoff': confidence_cutoff,
+                            'setpoint': setpoint,
+                            'MaxSearch': max_search,
+                            'Time': end_time-start_time}
+        # end
+        return self.cs5_results

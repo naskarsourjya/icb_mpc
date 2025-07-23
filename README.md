@@ -174,8 +174,9 @@ discuss:
 
 # Week 22:
 1. reduce the time stamp, and reduce the simulation  time to 20%.
-2. Fix plot.
-3. Greedy cost function (maximze C_b)
+2. Fix plot. D0ne
+3. Greedy cost function (maximze C_b). Done
+4. Investigate parameters Q and R for lqr effect on solution.
 3. Implement the the midterm icb mpc algo
 4. Write Theory outline and sections in overleaf.
 5. Implement the multi stage mpc example
@@ -231,3 +232,8 @@ next steps, impelement parallelisation, give runtime numbers
 4. Method: ICB MPC
 5. Results: Case Study, Discussion
 6. Conclusion
+
+# Thesis Notes
+ 1. Add stuff about the history and inception of MPC for chapter 2 where MPC is discussed in detail.
+ 2. My initial thought was that Robust MPC with the nominal, cqr high, cqr low models would work better because in Robust MPC no input shifting policy is explicitly chosen, apart from the non-anticipatory constraints. But now that I think about it, my algo is a bit better because the not only we have the upper and lower bounds of the cqr model, but we also have random points between the upper and lower limits, helping us out in case of systems which are not monotonic.
+ 3. add a case study for a highly non monotonic system.

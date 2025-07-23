@@ -139,19 +139,19 @@ class CSTR_dompc:
         # end
         return simulator
 
-    def _get_mpc(self, model, n_horizon, setpoint, r=1):
+    def _get_mpc(self, model, n_horizon, setpoint, r):
         # init
         mpc = do_mpc.controller.MPC(model)
 
         # Set settings of MPC:
         mpc.settings.n_horizon = n_horizon
-        mpc.settings.n_robust = 1
-        mpc.settings.open_loop = 0
+        mpc.settings.n_robust = 0
+        #mpc.settings.open_loop = 0
         mpc.settings.t_step = self.t_step
-        mpc.settings.state_discretization = 'collocation'
-        mpc.settings.collocation_type = 'radau'
-        mpc.settings.collocation_deg = 2
-        mpc.settings.collocation_ni = 1
+        #mpc.settings.state_discretization = 'collocation'
+        #mpc.settings.collocation_type = 'radau'
+        #mpc.settings.collocation_deg = 2
+        #mpc.settings.collocation_ni = 1
         mpc.settings.store_full_solution = True
 
         # suppress solver output
@@ -165,8 +165,15 @@ class CSTR_dompc:
         mpc.scaling['_u', 'F'] = 100
 
         # setting up the cost function
-        mterm = (model.x['C_b'] - setpoint) ** 2
-        #lterm = (model.x['C_b'] - 0.6) ** 2
+        if setpoint is not None:
+            # setpoint tracking
+            mterm = (setpoint - model.x['C_b']) ** 2
+
+        else:
+            # greedy cost function
+            mterm = -model.x['C_b']
+
+
         mpc.set_objective(mterm=mterm, lterm=mterm)
 
         # setting up the factors for input penalisation
@@ -198,9 +205,12 @@ class CSTR_dompc:
         #mpc.set_nl_cons('T_R', model.x['T_R'], ub=140, soft_constraint=True, penalty_term_cons=1e2)
 
         # setting up parameter uncertainty
-        alpha_var = np.array([1., 1.05, 0.95])
-        beta_var = np.array([1., 1.1, 0.9])
-        mpc.set_uncertainty_values(alpha=alpha_var, beta=beta_var)
+        p_num = mpc.get_p_template(n_combinations=1)
+        p_num['_p', 0] = np.array([1, 1])
+        def p_fun(t_now):
+            return p_num
+
+        mpc.set_p_fun(p_fun)
 
         # completing the setup of the mpc
         mpc.setup()
@@ -216,6 +226,7 @@ class CSTR_dompc:
         # supperess ipopt output
         if suppress_ipopt:
             mpc.settings.supress_ipopt_output()
+        mpc.settings.store_full_solution = True
 
         # set t_step
         mpc.set_param(t_step=self.t_step)
@@ -223,18 +234,20 @@ class CSTR_dompc:
         # set horizon
         mpc.set_param(n_horizon=n_horizon)
 
-        # setting up cost function
-        # setpoint tracking
-        #mterm = (setpoint - surrogate_model.x['state_2_lag_0']) ** 2
+        # setting up the cost function
+        if setpoint is not None:
+            # setpoint tracking
+            mterm = (setpoint - surrogate_model.x['state_2_lag_0']) ** 2
 
-        # greedy cost function
-        mterm = -surrogate_model.x['state_2_lag_0']
+        else:
+            # greedy cost function
+            mterm = -surrogate_model.x['state_2_lag_0']
 
         # passing objective function
         mpc.set_objective(mterm=mterm, lterm=mterm)
 
         # input penalisation
-        mpc.set_rterm(input_1_lag_0=r, input_2_lag_0=r)
+        mpc.set_rterm(input_1_lag_0=r*0.1, input_2_lag_0=r*1e-3)
 
         # setting up boundaries for mpc states
         for i in range(n_x):
@@ -262,6 +275,77 @@ class CSTR_dompc:
             return tvp_template
 
         mpc.set_tvp_fun(tvp_fun)
+
+        # setup
+        mpc.setup()
+
+        # end
+        return mpc
+
+
+    def _get_robust_mpc(self, robust_model, n_x, n_u, n_horizon, r_horizon, r, setpoint, suppress_ipopt=False):
+
+        # generating mpc class
+        mpc = do_mpc.controller.MPC(model=robust_model)
+
+        # supperess ipopt output
+        if suppress_ipopt:
+            mpc.settings.supress_ipopt_output()
+
+        mpc.settings.store_full_solution = True
+
+        # set t_step
+        mpc.set_param(t_step=self.t_step)
+        mpc.settings.n_robust = r_horizon
+
+        # set horizon
+        mpc.set_param(n_horizon=n_horizon)
+
+        # setting up the cost function
+        if setpoint is not None:
+            # setpoint tracking
+            mterm = (setpoint - robust_model.x['state_2_lag_0']) ** 2
+
+        else:
+            # greedy cost function
+            mterm = -robust_model.x['state_2_lag_0']
+
+        # passing objective function
+        mpc.set_objective(mterm=mterm, lterm=mterm)
+
+        # input penalisation
+        mpc.set_rterm(input_1_lag_0=r*0.1, input_2_lag_0=r*1e-3)
+
+        # setting up boundaries for mpc states
+        for i in range(n_x):
+            mpc.bounds['lower', '_x', f'state_{i + 1}_lag_0'] = self.lbx[i]
+            mpc.bounds['upper', '_x', f'state_{i + 1}_lag_0'] = self.ubx[i]
+
+        # setting up boundaries for mpc inputs
+        for j in range(n_u):
+            mpc.bounds['lower', '_u', f'input_{j + 1}_lag_0'] = self.lbu[j]
+            mpc.bounds['upper', '_u', f'input_{j + 1}_lag_0'] = self.ubu[j]
+
+        # enter random setpoints inside the box constraints
+        tvp_template = mpc.get_tvp_template()
+
+        # sending random setpoints inside box constraints
+        def tvp_fun(t_ind):
+            #range_x = self.data['ubx'] - self.data['lbx']
+            #tvp_template['_tvp', :, 'state_ref'] = np.array([[-0.8], [0]])
+            #if t_ind<self.data['t_step']*iter/2:
+            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + step_mag * range_x
+
+            #else:
+            #    tvp_template['_tvp', :, 'state_ref'] = self.data['lbx'] + (1-step_mag) * range_x
+
+            return tvp_template
+
+        mpc.set_tvp_fun(tvp_fun)
+
+        p_switch_var = np.array([1, -1])
+
+        mpc.set_uncertainty_values(p_switch=p_switch_var)
 
         # setup
         mpc.setup()

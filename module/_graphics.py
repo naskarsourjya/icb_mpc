@@ -127,15 +127,36 @@ class plotter():
         return None
 
 
-    def plot_simulation(self):
+    def plot_simulation(self, system):
         assert self.flags['simulation_ready'], 'Simulation not run! Run simulation first.'
 
         # using do-mpc for the plot
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+
         fig, ax, graphics = do_mpc.graphics.default_plot(self.simulation['simulator'].data, figsize=(self.width_px, self.height_px))
         graphics.plot_results()
         graphics.reset_axes()
-        for ax_n in ax:
+        for i, ax_n in enumerate(ax):
+
+            # turn on axis
             ax_n.grid(True)
+
+            if i < n_x:
+
+                # System bounds (upper and lower)
+                ax_n.plot(self.simulation['simulator'].data['_time'], [system.ubx[i]] * len(self.simulation['simulator'].data['_time']),
+                        color='black', linestyle='solid', label='System Bounds' if i == 0 else None)
+                ax_n.plot(self.simulation['simulator'].data['_time'], [system.lbx[i]] * len(self.simulation['simulator'].data['_time']),
+                        color='black', linestyle='solid')
+
+            elif i>=n_x and i<(n_x+n_u):
+                # System bounds (upper and lower)
+                ax_n.plot(self.simulation['simulator'].data['_time'], [system.ubu[i-n_x]] * len(self.simulation['simulator'].data['_time']),
+                        color='black', linestyle='solid')
+                ax_n.plot(self.simulation['simulator'].data['_time'], [system.lbu[i-n_x]] * len(self.simulation['simulator'].data['_time']),
+                        color='black', linestyle='solid')
+
         fig.show()
 
         # end

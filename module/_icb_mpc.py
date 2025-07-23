@@ -11,11 +11,12 @@ class ICB_MPC():
 
         # sanity checks
         assert tightner > 0, "Tightner must be greater than 0."
-        assert confidence_cutoff > 0 and confidence_cutoff <=1, "Confidence cutoff must be between 0 and 1."
-        assert max_search >= 1 and isinstance(max_search, int), "Max search must be an integer greater than or equal to 1."
-        
+        assert confidence_cutoff > 0 and confidence_cutoff <= 1, "Confidence cutoff must be between 0 and 1."
+        assert max_search >= 1 and isinstance(max_search,
+                                              int), "Max search must be an integer greater than or equal to 1."
+
         # storage
-        #super(mpc_narx, self).__init__(model=model)     # `self` is the do_mpc MPC Controller
+        # super(mpc_narx, self).__init__(model=model)     # `self` is the do_mpc MPC Controller
         self.mpc = mpc
         self.cqr = cqr
         self.tightner = tightner
@@ -28,18 +29,15 @@ class ICB_MPC():
         # setup runtime
         self.setup()
 
-
     def setup(self):
         self._narxstates = None
         self._narxinputs = None
         self.history = None
         return None
 
-
     @property
     def states(self):
         return self._narxstates
-
 
     @states.setter
     def states(self, val):
@@ -54,15 +52,13 @@ class ICB_MPC():
         # storage
         self._narxstates = val
 
-
     @property
     def inputs(self):
         return self._narxinputs
 
-
     @inputs.setter
     def inputs(self, val):
-        if self.cqr.order>1:
+        if self.cqr.order > 1:
             assert isinstance(val, np.ndarray), "inputs must be a numpy.array."
 
             assert self.cqr.order - 1 == val.shape[0], \
@@ -88,7 +84,7 @@ class ICB_MPC():
         assert states.shape[1] == self.cqr.n_x, (
             'Expected number of states is: {}, but found {}'.format(self.cqr.n_x, states.shape[0]))
 
-        if self.cqr.order>1:
+        if self.cqr.order > 1:
 
             assert isinstance(inputs, np.ndarray), "inputs must be a numpy.array."
 
@@ -109,7 +105,6 @@ class ICB_MPC():
         # end
         return initial_cond
 
-
     def set_initial_guess(self):
 
         # calculate initial guess
@@ -122,7 +117,6 @@ class ICB_MPC():
 
         # end
         return None
-
 
     def bounds_extractor(self, mpc, bnd_type, var_type):
         assert bnd_type == 'upper' or bnd_type == 'lower', "Only supported types are upper and lower."
@@ -148,7 +142,6 @@ class ICB_MPC():
 
         return bnd
 
-
     def bounds_setter(self, mpc, bnd_type, var_type, bnd_val):
         assert bnd_type == 'upper' or bnd_type == 'lower', "Only supported types are upper and lower."
         assert var_type == '_x' or var_type == '_u', "Only supported types are _x and _u."
@@ -161,9 +154,7 @@ class ICB_MPC():
             for i, bnd_val_n in enumerate(bnd_val.flatten().tolist()):
                 mpc.bounds[bnd_type, var_type, str(mpc.model.u.master[i, 0])] = bnd_val_n
 
-
         return None
-
 
     def make_step_nobranch(self, x0):
 
@@ -195,7 +186,6 @@ class ICB_MPC():
 
         # end
         return u0
-
 
     def make_branch(self, u0_traj):
         assert self.cqr.flags['qr_ready'], "Quantile regressor not ready."
@@ -311,7 +301,6 @@ class ICB_MPC():
         # end
         return self.cqr.branches
 
-
     def plot_branch_matplotlib(self, t0=0.0, show_plot=True):
         n_x = self.cqr.n_x
         n_u = self.cqr.n_u
@@ -352,7 +341,6 @@ class ICB_MPC():
 
                 # Extracting mean prediction
                 mean_prediction.append(states[j][0, i])
-
 
             # Line plot of mean prediction
             ax.plot(time_stamp_states, mean_prediction,
@@ -401,7 +389,6 @@ class ICB_MPC():
             plt.close(fig)
             return fig, axes
 
-
     def get_robust_input(self, X):
 
         # init
@@ -410,24 +397,22 @@ class ICB_MPC():
         state_labels = ([col for col in labels if col.startswith('state')] +
                         [col for col in labels if col.startswith('input') and not col.endswith('lag_0')])
 
-
         X_0 = X.iloc[0][state_labels].to_numpy().reshape((-1, 1))
         U_O = X.iloc[0][input_labels].to_numpy().reshape((-1, 1))
         K_lqr = self.get_lqr_gain(X_0, U_O)
 
         X_0_stacked = np.hstack([X_0] * X.shape[0])
-        #K_lqr_stacked = np.vstack([K_lqr] * X.shape[0])
+        # K_lqr_stacked = np.vstack([K_lqr] * X.shape[0])
 
         U_opt_n = (K_lqr @ (X[state_labels].to_numpy().reshape((-1, self.cqr.n_x)).T - X_0_stacked) +
                    X[input_labels].to_numpy().reshape((-1, self.cqr.n_u)).T)
 
         X_robust = X.copy()
-        #X_robust[input_labels] = U_opt_n
+        # X_robust[input_labels] = U_opt_n
         for i, col in enumerate(input_labels):
             X_robust[col] = U_opt_n[i, :]
 
         return X_robust
-
 
     def get_lqr_gain(self, X_n, U_n):
 
@@ -448,9 +433,9 @@ class ICB_MPC():
         # end
         return lqr.K
 
-    def make_step(self, x0, enable_plots = False):
+    def make_step(self, x0, enable_plots=False):
 
-        assert x0.shape==(self.cqr.n_x, 1), \
+        assert x0.shape == (self.cqr.n_x, 1), \
             f"x0 should have shape ({self.cqr.n_x}, 1). Shape found instead is: {x0.shape}"
 
         # init
@@ -462,7 +447,7 @@ class ICB_MPC():
 
         # take the new x0 and generate new initial condition
         current_state = np.vstack([x0.reshape((1, -1)),
-                                  self.states[:-1, :]])
+                                   self.states[:-1, :]])
         x0_current = self._generate_initial_guess(states=current_state, inputs=prev_input)
 
         # extracting and storing boundaries
@@ -495,6 +480,10 @@ class ICB_MPC():
             # do make step
             u0 = self.mpc.make_step(x0=x0_current)
 
+            # extracting solver info
+            self.store_solver_stats = self.mpc.settings.store_solver_stats
+            self.solver_stats = self.mpc.solver_stats
+
             lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
             lbu = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')
@@ -513,7 +502,7 @@ class ICB_MPC():
 
             # setting up cqr
             self.cqr.states = current_state
-            if self.cqr.order>1:
+            if self.cqr.order > 1:
                 self.cqr.inputs = self.inputs
             self.cqr.set_initial_guess()
 
@@ -527,11 +516,11 @@ class ICB_MPC():
 
             # adjust bounds if necessary
             state_adjust_flag = self._adjust_state_bounds(mpc=self.mpc, branches=branches,
-                                              default_lbx = default_lbx, default_ubx=default_ubx)
+                                                          default_lbx=default_lbx, default_ubx=default_ubx)
 
             input_adjust_flag = self._adjust_input_bounds(mpc=self.mpc, branches=branches,
-                                              default_lbu = default_lbu, default_ubu=default_ubu)
-            
+                                                          default_lbu=default_lbu, default_ubu=default_ubu)
+
             # increment frame number
             self.frame_number += 1
 
@@ -564,7 +553,7 @@ class ICB_MPC():
 
                 break
 
-            elif i == self.max_search-1:
+            elif i == self.max_search - 1:
 
                 # debug printouts
                 if self.verbose:
@@ -584,7 +573,8 @@ class ICB_MPC():
                     print()
                     print('Printing branches form cqr')
                     print(self.cqr.branches['u0_traj'])
-                    print(f"-------- Max interation reached and feasible input not found! Last calculated input returned. --------\n\n")
+                    print(
+                        f"-------- Max interation reached and feasible input not found! Last calculated input returned. --------\n\n")
 
             else:
 
@@ -609,9 +599,6 @@ class ICB_MPC():
                     print(
                         f"---- Feasible input not found! Recalculating again. ---->>>>\n\n")
 
-
-
-
         # revert back to the system boundaries for the state
         self.bounds_setter(mpc=self.mpc, bnd_type='upper', var_type='_x', bnd_val=default_ubx)
         self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_x', bnd_val=default_lbx)
@@ -620,7 +607,7 @@ class ICB_MPC():
         self.bounds_setter(mpc=self.mpc, bnd_type='lower', var_type='_u', bnd_val=default_lbu)
 
         # push the new u0 into the new initial condition
-        if self.cqr.order>1:
+        if self.cqr.order > 1:
             pseudo_input_history = np.vstack([u0.reshape((1, -1)),
                                               self.inputs[:-1, :]])
             self.inputs = pseudo_input_history
@@ -675,14 +662,14 @@ class ICB_MPC():
                 # calculation per alpha value
                 for i, states_n in enumerate(branches['states']):
 
-                    if i==0:
+                    if i == 0:
                         continue
 
                     # init
                     default_lbx_matrix_n = np.vstack([default_lbx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
                     default_ubx_matrix_n = np.vstack([default_ubx.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
                     default_range_x_n = default_ubx_matrix_n - default_lbx_matrix_n
-                    #alpha_n = branches['alphas'][i]
+                    # alpha_n = branches['alphas'][i]
 
                     # checking the protrusions above the upper boundary, if positive: boundary is crossed
                     residue_upper = (states_n - default_ubx_matrix_n) / default_range_x_n
@@ -709,8 +696,8 @@ class ICB_MPC():
                     residue_prob_l = np.sum(binary_lower, axis=0) / states_n.shape[0]
 
                     # probabilities scaled with the cqr alpha value
-                    #upper_prob = alpha_n * residue_prob_u
-                    #lower_prob = alpha_n * residue_prob_l
+                    # upper_prob = alpha_n * residue_prob_u
+                    # lower_prob = alpha_n * residue_prob_l
                     upper_prob_stacked = np.vstack([residue_prob_u] * states_n.shape[0])
                     lower_prob_stacked = np.vstack([residue_prob_l] * states_n.shape[0])
 
@@ -759,7 +746,6 @@ class ICB_MPC():
 
         return adjust_flag
 
-
     def _adjust_input_bounds(self, mpc, branches, default_lbu, default_ubu):
         # checking if all the predicted states saty inside the boundary
         # for i in range(all_states.shape[0]):
@@ -782,14 +768,14 @@ class ICB_MPC():
                 # calculation per alpha value
                 for i, states_n in enumerate(branches['inputs']):
 
-                    if i==0:
+                    if i == 0:
                         continue
 
                     # init
                     default_lbu_matrix_n = np.vstack([default_lbu.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
                     default_ubu_matrix_n = np.vstack([default_ubu.reshape((-1,))[0: self.cqr.n_x]] * states_n.shape[0])
                     default_range_u_n = default_ubu_matrix_n - default_lbu_matrix_n
-                    #alpha_n = branches['alphas'][i]
+                    # alpha_n = branches['alphas'][i]
 
                     # checking the protrusions above the upper boundary, if positive: boundary is crossed
                     residue_upper = (states_n - default_ubu_matrix_n) / default_range_u_n
@@ -816,8 +802,8 @@ class ICB_MPC():
                     residue_prob_l = np.sum(binary_lower, axis=0) / states_n.shape[0]
 
                     # probabilities scaled with the cqr alpha value
-                    #upper_prob = alpha_n * residue_prob_u
-                    #lower_prob = alpha_n * residue_prob_l
+                    # upper_prob = alpha_n * residue_prob_u
+                    # lower_prob = alpha_n * residue_prob_l
                     upper_prob_stacked = np.vstack([residue_prob_u] * states_n.shape[0])
                     lower_prob_stacked = np.vstack([residue_prob_l] * states_n.shape[0])
 
@@ -866,7 +852,6 @@ class ICB_MPC():
 
         return adjust_flag
 
-
     def plot_trials_matplotlib(self, show_plot=True):
         assert self.enable_plots, 'Plots storage not enabled! Set enable_plots=True in MPC_Brancher.make_step.'
 
@@ -896,21 +881,20 @@ class ICB_MPC():
                 ax = axes[i]
 
                 # Simulation line (history of states)
-                ax.plot(history['time'], history['x0'][i, :], color='black', linestyle='solid',
+                ax.plot(history['time'], history['x0'][i, :], color='#1f77b4', linestyle='solid',
                         label='Simulation' if i == 0 else None)
 
                 # System bounds (upper and lower)
-                ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='grey', linestyle='solid',
+                ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='black', linestyle='solid',
                         label='System Bounds' if i == 0 else None)
-                ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='grey', linestyle='solid')
+                ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='black', linestyle='solid')
 
                 # Optimized MPC bounds (upper and lower)
-                ax.plot(branch_times, [ubx[i]] * len(branch_times), color='orange', linestyle='dashed',
-                        label='MPC Upper Bound' if i == 0 else None)
-                ax.plot(branch_times, [lbx[i]] * len(branch_times), color='brown', linestyle='dashed',
-                        label='MPC Lower Bound' if i == 0 else None)
+                ax.plot(branch_times, [ubx[i]] * len(branch_times), color='purple', linestyle='dashed',
+                        label='MPC Bound' if i == 0 else None)
+                ax.plot(branch_times, [lbx[i]] * len(branch_times), color='purple', linestyle='dashed')
 
-                #ax.set_ylabel(f'State {i + 1}')
+                # ax.set_ylabel(f'State {i + 1}')
 
             # Loop through each control variable (n_u)
             for i in range(n_u):
@@ -919,20 +903,20 @@ class ICB_MPC():
                 # Combine historical control inputs with the first value from branches
                 u_combined = np.hstack([history['u0'][i, :-1], branches['u0_traj'][0, i]])
 
-                ax.plot(history['time'], u_combined, color='black', linestyle='solid')
+                ax.plot(history['time'], u_combined, color='#1f77b4', linestyle='solid')
 
                 # System bounds (upper and lower)
-                ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='grey', linestyle='solid')
-                ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='grey', linestyle='solid')
+                ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='black', linestyle='solid')
+                ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='black', linestyle='solid')
 
                 # Optimized MPC bounds (upper and lower)
-                ax.plot(branch_times, [ubu[i]] * len(branch_times), color='orange', linestyle='dashed')
-                ax.plot(branch_times, [lbu[i]] * len(branch_times), color='brown', linestyle='dashed')
+                ax.plot(branch_times, [ubu[i]] * len(branch_times), color='purple', linestyle='dashed')
+                ax.plot(branch_times, [lbu[i]] * len(branch_times), color='purple', linestyle='dashed')
 
-                #ax.set_ylabel(f'Input {j + 1}')
+                # ax.set_ylabel(f'Input {j + 1}')
 
             # Set x-axis labels on all plots after looping through inputs and states.
-            #for ax in axes:
+            # for ax in axes:
             #    ax.set_xlabel('Time [s]')
 
             fig.suptitle("MPC Trial Plots", fontsize=16)
