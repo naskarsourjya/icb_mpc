@@ -7,11 +7,17 @@ from tqdm import tqdm
 import torch
 import os
 import imageio
-from IPython.display import display, Image
+#from IPython.display import display, Image
+from IPython.display import display as dispp
+from IPython.display import Image as immm
+
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 import time
+from datetime import datetime
+import scienceplots
+from PIL import Image
 
 
 from ._graphics import plotter
@@ -23,6 +29,8 @@ from ._cqr import cqr_narx
 from ._surrogate import Surrogate
 from ._cqr2dompc import Robust_Model
 
+# plot init
+plt.style.use(['science','no-latex'])
 
 class DataManager(plotter):
     def __init__(self, set_seed = None):
@@ -111,6 +119,7 @@ class DataManager(plotter):
 
         # storage
         self.data['simulation'] = df
+        self.data['sampler'] = simulator
         self.data['n_samples'] = n_samples
         self.data['n_x'] = model.n_x
         self.data['n_u'] = model.n_u
@@ -512,48 +521,8 @@ class DataManager(plotter):
         # end
         return np.vstack(states), np.vstack(inputs)
 
-
-
-    def show_gif(self, file_name= "plotly_animation.gif", frame_dir = "plotly_frames"):
-        assert self.store_gif, "Create gif not enabled in run_simulation!"
-
-        # init
-        all_plots = self.all_plots
-        i = 0
-        image_files = []
-
-        # Directory to save images
-        os.makedirs(frame_dir, exist_ok=True)
-
-        # generating images
-        for plots in tqdm(all_plots, desc="Storing plots"):
-            for fig in plots:
-                # convert to png
-                img_path = f"{frame_dir}/frame_{i}.png"
-                fig.write_image(img_path)
-                image_files.append(img_path)
-                i += 1
-
-        # Convert images to GIF
-        with imageio.get_writer(file_name, mode='I', duration=0.5) as writer:
-            for img in tqdm(image_files, desc='Generating gif'):
-                image = imageio.imread(img)
-                writer.append_data(image)
-
-        # Clean up temp files
-        for fname in image_files:
-            os.remove(fname)
-        os.rmdir(frame_dir)
-
-        print(f"GIF saved as {file_name}")
-
-        # display gif
-        display(Image(filename=file_name))
-
-        return  None
-
     def show_gif_matplotlib(self, system, gif_name="matplotlib_animation.gif", gif_path="", temp_dir="matplotlib_frames",
-                            duration=0.5):
+                            duration=0.5, figsize_w= 12, figsize_h=8):
         assert self.store_gif, "Create gif not enabled in run_simulation!"
 
         # init
@@ -570,19 +539,26 @@ class DataManager(plotter):
         for plots in tqdm(all_plots, desc="Storing plots"):
             for matplots in plots:
                 fig, axes = matplots
+                fig.set_size_inches(figsize_w, figsize_h)
 
                 for jj, ax in enumerate(axes):
-
                     ax.set_ylabel(all_y_labels[jj])
 
                 filename = os.path.join(temp_dir, f"frame_{i:03d}.png")
-                fig.savefig(filename)
+                fig.savefig(filename)#, dpi=dpi)#, bbox_inches='tight')
                 filenames.append(filename)
                 plt.close(fig)  # Close the figure to save memory
                 i += 1
 
         # Read all files and create gif
         images = [imageio.v2.imread(fname) for fname in tqdm(filenames, desc='Generating gif')]
+        # fix
+        standard_shape = images[0].shape
+        images = [image if image.shape == standard_shape else
+                  np.array(Image.fromarray(image).resize((standard_shape[1], standard_shape[0])))
+                  for image in images]
+
+
         imageio.mimsave(gif_name, images, duration=duration)
 
         # Clean up temp files
@@ -593,7 +569,7 @@ class DataManager(plotter):
         print(f"GIF saved to {gif_path}")
 
         # display gif
-        display(Image(filename=gif_name))
+        dispp(immm(filename=gif_name))
 
         return None
 
@@ -865,6 +841,12 @@ class DataManager(plotter):
         all_plots = []
         closed_loop_cost = []
         opt_success = []
+        ic_flag = False if x_init is None else True
+
+        # this is very specific to the mpc class for closed loop calc
+        r_mpc = r * np.array([[0.1, 0],
+                              [0,   1e-3]])
+        u_prev = np.array([[0], [0]])
 
         # system init
         model = system._get_model()
@@ -925,7 +907,12 @@ class DataManager(plotter):
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)
 
-            closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            # calculating closed loop cost
+            cl_cost = -x0[1,0] + (u0-u_prev).T @ r_mpc @ (u0-u_prev)
+            u_prev = u0
+
+            #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            closed_loop_cost.append(cl_cost)
             opt_success.append(cqr_mpc.solver_stats['success'])
 
             print(f"\n\n++++#### Simulation report ####++++")
@@ -944,6 +931,7 @@ class DataManager(plotter):
 
         # storage
         self.simulation['simulator'] = simulator
+        self.simulation['cs1'] = simulator
         self.store_gif = store_gif
         self.all_plots = all_plots
 
@@ -952,21 +940,25 @@ class DataManager(plotter):
                 'simulation_ready': True,
             })
 
-        end_time = time.time()
-
         # pass through
-        self.cs1_results = {'Type': 'cs1',
-                            'OptimizerSuccess': all(opt_success),
-                       'ClosedLoopCost': sum(closed_loop_cost) / len(closed_loop_cost),
-                       'BoundaryViolation': violation_flag,
-                       'Iterations': iter,
-                       'MpcHorizon': n_horizon,
-                       'InputCost': r,
-                       'Tightner': tightner,
-                       'RandomSampling':rnd_samples,
-                       'ConfidenceCutoff': confidence_cutoff,
-                       'setpoint': setpoint,
-                       'MaxSearch':max_search,
+        self.cs1_results = {'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'Type': 'cs1',
+                            'No Samples': self.data['n_samples'],
+                            'Surrogate Nodes': sum(self.narx.hidden_layers),
+                            'CQR Nodes': sum(self.cqr.hidden_layers),
+                            'CQR Alpha': self.cqr.alpha,
+                            'Initial Condition': ic_flag,
+                            'Optimizer Success': all(opt_success),
+                            'Closed Loop Cost': sum(closed_loop_cost) / len(closed_loop_cost),
+                            'Boundary Violation': violation_flag,
+                            'Iterations': iter,
+                            'MPC Horizon': n_horizon,
+                            'MPC Input Cost': r,
+                            'ICBMPC Tightner': tightner,
+                            'ICBMPC Random Sampling':rnd_samples,
+                            'ICBMPC Confidence Cutoff': confidence_cutoff,
+                            'MPC Setpoint': setpoint,
+                            'ICBMPC Max Search':max_search,
                             'Time': end_time-start_time}
         #(self, system, iter, n_horizon, r, tightner, rnd_samples, confidence_cutoff, setpoint, max_search, R, Q, store_gif=False, x_init=None, u_init=None)
         # end
@@ -1042,10 +1034,13 @@ class DataManager(plotter):
         self.cs2_surrogate = MPC_NARX(mpc=surrogate_mpc, n_x=self.data['n_x'], n_u=self.data['n_u'], order=self.data['order'])
 
         # preformance
-        self.cs2_results = {'Type': 'cs2',
-                            'MpcHorizon': n_horizon,
-                       'InputCost': r,
-                       'setpoint': setpoint}
+        self.cs2_results = {'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'Type': 'cs2',
+                            'No Samples': self.data['n_samples'],
+                            'Surrogate Nodes': sum(narx_model.hidden_layers),
+                            'MPC Horizon': n_horizon,
+                            'MPC Input Cost': r,
+                            'MPC Setpoint': setpoint}
 
         # end
         return None
@@ -1054,12 +1049,15 @@ class DataManager(plotter):
     def case_study_2(self, system, iter, x_init=None, u_init=None):
 
         # init
-        n_x = self.data['n_x']
-        n_u = self.data['n_u']
         order = self.data['order']
         mpc_sur = self.cs2_surrogate
         closed_loop_cost = []
         opt_success = []
+        u_prev = np.array([[0], [0]])
+        r_mpc = self.cs2_results['MPC Input Cost'] * np.array([[0.1, 0],
+                                                           [0,   1e-3]])
+        ic_flag = False if x_init is None else True
+
 
         # real model and simulator
         real_model = system._get_model()
@@ -1102,8 +1100,12 @@ class DataManager(plotter):
             # simulation steps
             x0_real = real_simulator.make_step(u0=u0_surrogate)
 
-            # storage
-            closed_loop_cost.append(mpc_sur.mpc.solver_stats['iterations']['obj'][-1])
+            # calculating closed loop cost
+            cl_cost = -x0_real[1,0] + (u0_surrogate-u_prev).T @ r_mpc @ (u0_surrogate-u_prev)
+            u_prev = u0_surrogate
+
+            #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            closed_loop_cost.append(cl_cost)
             opt_success.append(mpc_sur.mpc.solver_stats['success'])
 
         end_time = time.time()
@@ -1112,6 +1114,7 @@ class DataManager(plotter):
 
         # storage
         self.simulation['simulator'] = real_simulator
+        self.simulation['cs2'] = real_simulator
 
         # flag update
         self.flags.update({
@@ -1119,11 +1122,13 @@ class DataManager(plotter):
         })
 
         # pass through
-        self.cs2_results['OptimizerSuccess'] = all(opt_success)
-        self.cs2_results['ClosedLoopCost'] = sum(closed_loop_cost) / len(closed_loop_cost)
-        self.cs2_results['BoundaryViolation'] = violation_flag
+        self.cs2_results['Optimizer Success'] = all(opt_success)
+        self.cs2_results['Closed Loop Cost'] = sum(closed_loop_cost) / len(closed_loop_cost)
+        self.cs2_results['Boundary Violation'] = violation_flag
         self.cs2_results['Iterations'] = iter
         self.cs2_results['Time'] = end_time-start_time
+        self.cs2_results['Initial Condition'] = ic_flag
+
 
         # end
         return self.cs2_results
@@ -1145,10 +1150,15 @@ class DataManager(plotter):
                                         order=self.data['order'])
 
         # preformance
-        self.cs3_results = {'Type': 'cs3',
-                            'MpcHorizon': n_horizon,
-                            'InputCost': r,
-                            'setpoint': setpoint}
+        self.cs3_results = {'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'Type': 'cs3',
+                            'No Samples': self.data['n_samples'],
+                            'Surrogate Nodes': sum(self.narx.hidden_layers),
+                            'CQR Nodes': sum(self.cqr.hidden_layers),
+                            'CQR Alpha': self.cqr.alpha,
+                            'MPC Horizon': n_horizon,
+                            'MPC Input Cost': r,
+                            'MPC Setpoint': setpoint}
 
         return None
 
@@ -1162,6 +1172,10 @@ class DataManager(plotter):
         robust_mpc_narx = self.robust_mpc_narx
         closed_loop_cost = []
         opt_success = []
+        r_mpc = self.cs3_results['MPC Input Cost'] * np.array([[0.1, 0],
+                                                           [0,   1e-3]])
+        u_prev = np.array([[0], [0]])
+        ic_flag = False if x_init is None else True
 
         # real model and simulator
         real_model = system._get_model()
@@ -1203,8 +1217,12 @@ class DataManager(plotter):
             # simulation steps
             x0_real = real_simulator.make_step(u0=u0_surrogate)
 
-            # storage
-            closed_loop_cost.append(robust_mpc_narx.mpc.solver_stats['iterations']['obj'][-1])
+            # calculating closed loop cost
+            cl_cost = -x0_real[1,0] + (u0_surrogate-u_prev).T @ r_mpc @ (u0_surrogate-u_prev)
+            u_prev = u0_surrogate
+
+            #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            closed_loop_cost.append(cl_cost)
             opt_success.append(robust_mpc_narx.mpc.solver_stats['success'])
 
         end_time = time.time()
@@ -1213,6 +1231,7 @@ class DataManager(plotter):
 
         # storage
         self.simulation['simulator'] = real_simulator
+        self.simulation['cs3'] = real_simulator
 
         # flag update
         self.flags.update({
@@ -1220,11 +1239,12 @@ class DataManager(plotter):
         })
 
         # pass through
-        self.cs3_results['OptimizerSuccess'] = all(opt_success)
-        self.cs3_results['ClosedLoopCost'] = sum(closed_loop_cost) / len(closed_loop_cost)
-        self.cs3_results['BoundaryViolation'] = violation_flag
+        self.cs3_results['Optimizer Success'] = all(opt_success)
+        self.cs3_results['Closed Loop Cost'] = sum(closed_loop_cost) / len(closed_loop_cost)
+        self.cs3_results['Boundary Violation'] = violation_flag
         self.cs3_results['Iterations'] = iter
         self.cs3_results['Time'] = end_time-start_time
+        self.cs3_results['Initial Condition'] = ic_flag
 
         # end
         return self.cs3_results
@@ -1240,10 +1260,11 @@ class DataManager(plotter):
                                         order=self.data['order'])
 
         # preformance
-        self.cs4_results = {'Type': 'cs4',
-                            'MpcHorizon': n_horizon,
-                            'InputCost': r,
-                            'setpoint': setpoint}
+        self.cs4_results = {'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'Type': 'cs4',
+                            'MPC Horizon': n_horizon,
+                            'MPC Input Cost': r,
+                            'MPC Setpoint': setpoint}
 
         return None
 
@@ -1255,6 +1276,11 @@ class DataManager(plotter):
         cs4_mpc = self.cs4_mpc
         closed_loop_cost = []
         opt_success = []
+        ic_flag = False if x_init is None else True
+
+        r_mpc = self.cs4_results['MPC Input Cost'] * np.array([[0.1, 0],
+                                                           [0,   1e-3]])
+        u_prev = np.array([[0], [0]])
 
         # real model and simulator
         real_model = system._get_model()
@@ -1296,8 +1322,12 @@ class DataManager(plotter):
             # simulation steps
             x0_real = real_simulator.make_step(u0=u0_surrogate)
 
-            # storage
-            closed_loop_cost.append(cs4_mpc.mpc.solver_stats['iterations']['obj'][-1])
+            # calculating closed loop cost
+            cl_cost = -x0_real[1,0] + (u0_surrogate-u_prev).T @ r_mpc @ (u0_surrogate-u_prev)
+            u_prev = u0_surrogate
+
+            #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            closed_loop_cost.append(cl_cost)
             opt_success.append(cs4_mpc.mpc.solver_stats['success'])
 
         end_time = time.time()
@@ -1306,6 +1336,7 @@ class DataManager(plotter):
 
         # storage
         self.simulation['simulator'] = real_simulator
+        self.simulation['cs4'] = real_simulator
 
         # flag update
         self.flags.update({
@@ -1313,11 +1344,12 @@ class DataManager(plotter):
         })
 
         # pass through
-        self.cs4_results['OptimizerSuccess'] = all(opt_success)
-        self.cs4_results['ClosedLoopCost'] = sum(closed_loop_cost) / len(closed_loop_cost)
-        self.cs4_results['BoundaryViolation'] = violation_flag
+        self.cs4_results['Optimizer Success'] = all(opt_success)
+        self.cs4_results['Closed Loop Cost'] = sum(closed_loop_cost) / len(closed_loop_cost)
+        self.cs4_results['Boundary Violation'] = violation_flag
         self.cs4_results['Iterations'] = iter
         self.cs4_results['Time'] = end_time-start_time
+        self.cs4_results['Initial Condition'] = ic_flag
 
 
 
@@ -1335,6 +1367,10 @@ class DataManager(plotter):
         all_plots = []
         closed_loop_cost = []
         opt_success = []
+        r_mpc = r * np.array([[0.1, 0],
+                              [0,   1e-3]])
+        u_prev = np.array([[0], [0]])
+        ic_flag = False if x_init is None else True
 
         # system init
         model = system._get_model()
@@ -1395,7 +1431,12 @@ class DataManager(plotter):
             y0 = simulator.make_step(u0)
             x0 = estimator.make_step(y0)
 
-            closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            # calculating closed loop cost
+            cl_cost = -x0[1,0] + (u0-u_prev).T @ r_mpc @ (u0-u_prev)
+            u_prev = u0
+
+            #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
+            closed_loop_cost.append(cl_cost)
             opt_success.append(cqr_mpc.solver_stats['success'])
 
             print(f"\n\n++++#### Simulation report ####++++")
@@ -1414,6 +1455,7 @@ class DataManager(plotter):
 
         # storage
         self.simulation['simulator'] = simulator
+        self.simulation['cs5'] = simulator
         self.store_gif = store_gif
         self.all_plots = all_plots
 
@@ -1423,18 +1465,107 @@ class DataManager(plotter):
             })
 
         # pass through
-        self.cs5_results = {'Type': 'cs5',
-                            'OptimizerSuccess': all(opt_success),
-                            'ClosedLoopCost': sum(closed_loop_cost) / len(closed_loop_cost),
-                            'BoundaryViolation': violation_flag,
+        self.cs5_results = {'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'Type': 'cs5',
+                            'No Samples': self.data['n_samples'],
+                            'Surrogate Nodes': sum(self.narx.hidden_layers),
+                            'CQR Nodes': sum(self.cqr.hidden_layers),
+                            'CQR Alpha': self.cqr.alpha,
+                            'Initial Condition': ic_flag,
+                            'Optimizer Success': all(opt_success),
+                            'Closed Loop Cost': sum(closed_loop_cost) / len(closed_loop_cost),
+                            'Boundary Violation': violation_flag,
                             'Iterations': iter,
-                            'MpcHorizon': n_horizon,
-                            'InputCost': r,
-                            'Tightner': tightner,
-                            'RandomSampling': rnd_samples,
-                            'ConfidenceCutoff': confidence_cutoff,
-                            'setpoint': setpoint,
-                            'MaxSearch': max_search,
+                            'MPC Horizon': n_horizon,
+                            'MPC Input Cost': r,
+                            'ICBMPC Tightner': tightner,
+                            'ICBMPC Random Sampling':rnd_samples,
+                            'ICBMPC Confidence Cutoff': confidence_cutoff,
+                            'MPC Setpoint': setpoint,
+                            'ICBMPC Max Search':max_search,
                             'Time': end_time-start_time}
         # end
         return self.cs5_results
+    
+
+    def combine_plots(self, system, x_limit_up = None, x_limit_down = None, y_limit_up = None, y_limit_down = None, figsize= None):
+        """
+        Combines all case study plots into a single figure.
+        """
+
+        assert self.flags['simulation_ready'] == True, \
+            'Simulation data is not ready! Run the case studies first!'
+        
+        if figsize is None:
+            figsize = (self.width_px, self.height_px)
+
+        # init
+        n_x = self.data['n_x']
+        n_u = self.data['n_u']
+        model = system._get_model()
+        all_y_labels = model.x.keys() + model.u.keys()[1:] + model.aux.keys()[1:]
+        simulators = [self.simulation['cs1'], self.simulation['cs2'], self.simulation['cs3'], self.simulation['cs4'], self.simulation['cs5']]
+        labels = ['cs1', 'cs2', 'cs3', 'cs4', 'cs5']
+        counter = 0
+
+        fig, axes = plt.subplots(nrows=n_x + n_u, ncols=1, figsize=figsize, sharex=True)
+
+        for i in range(n_x):
+            ax = axes[i]
+
+            # plot ii-th state simulation
+            for ii, simulator in enumerate(simulators):
+                ax.plot(simulator.data['_time'], simulator.data['_x'][:, i], label=labels[ii] if i ==0 else None)
+
+            # plot system boundaries
+            #ax.plot(simulator.data['_time'], [system.ubx[i]] * len(simulator.data['_time']), color='black', linestyle='solid', label='System Bounds' if i == 0 else None)
+            #ax.plot(simulator.data['_time'], [system.lbx[i]] * len(simulator.data['_time']), color='black', linestyle='solid')
+
+            # System bounds (upper and lower)
+            upper_limit = np.full((simulator.data['_time'].shape[0],), system.ubx[i])
+            lower_limit = np.full((simulator.data['_time'].shape[0],), system.lbx[i])
+
+            # gray infill
+            ax.fill_between(simulator.data['_time'].reshape(-1,), lower_limit, upper_limit, color='gray', alpha=0.5)
+
+            # set y label
+            ax.set_ylabel(all_y_labels[counter])
+            counter += 1
+            
+        for j in range(n_u):
+            ax = axes[n_x + j]
+
+            # plot jj-th state simulation
+            for jj, simulator in enumerate(simulators):
+                ax.plot(simulator.data['_time'], simulator.data['_u'][:, j])
+
+            # plot system boundaries
+            #ax.plot(simulator.data['_time'], [system.ubu[j]] * len(simulator.data['_time']), color='black', linestyle='solid')
+            #ax.plot(simulator.data['_time'], [system.lbu[j]] * len(simulator.data['_time']), color='black', linestyle='solid')
+
+            # System bounds (upper and lower)
+            upper_limit = np.full((simulator.data['_time'].shape[0],), system.ubu[j])
+            lower_limit = np.full((simulator.data['_time'].shape[0],), system.lbu[j])
+
+            # gray infill
+            ax.fill_between(simulator.data['_time'].reshape(-1,), lower_limit, upper_limit, color='gray', alpha=0.5)
+
+            # set y label
+            ax.set_ylabel(all_y_labels[counter])
+            counter += 1
+
+        if y_limit_up is not None and y_limit_down is not None:
+            for i, ax in enumerate(axes):
+                ax.set_ylim(y_limit_down[i], y_limit_up[i])
+            
+        if x_limit_up is not None and x_limit_down is not None:
+            for i, ax in enumerate(axes):
+                ax.set_xlim(x_limit_down[i], x_limit_up[i])
+
+        ax.set_xlabel('Time [s]')
+        fig.legend(loc='upper right')
+        fig.suptitle("Combined Case Studies")
+
+        fig.show()
+
+        return None

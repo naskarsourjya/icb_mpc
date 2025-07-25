@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
+import scienceplots
+
+plt.style.use(['science','no-latex'])
 
 
 class MPC_Brancher_midterm():
@@ -442,7 +445,7 @@ class MPC_Brancher_midterm():
 
             # extracting optimal trajectories
             u_traj = self.mpc.opt_x_num['_u']
-            u_traj_numpy = np.array([entry[0][0].full().flatten() for entry in u_traj])
+            u_traj_numpy = np.array([entry[0].full().flatten() for entry in u_traj])
 
             # setting up cqr
             self.cqr.states = current_state

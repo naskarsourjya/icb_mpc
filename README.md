@@ -182,6 +182,12 @@ discuss:
 5. Implement the multi stage mpc example
 6. Implement Klatt Engell CSTR
 
+# Week -2:
+1. Change closed loop cost, it is not correct.
+2. Improve plots with SciencePlots.
+3. combine cas1,2,3,4,5 into one plot.
+4. remove grids form plots.
+
 
 
 ## todo

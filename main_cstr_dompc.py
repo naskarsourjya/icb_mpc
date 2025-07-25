@@ -1,5 +1,9 @@
 from module import *
 import numpy as np
+import matplotlib.pyplot as plt
+import scienceplots
+# plot init
+plt.style.use(['science','no-latex'])
 
 # set default device
 default_device = 'cpu'
@@ -58,15 +62,15 @@ r = 0.1
 tightner = 0.1
 confidence_cutoff = 0.8
 rnd_samples = 7
-max_search = 10
+max_search = 3
 dm.case_study_1(system=system, iter=iter, setpoint=setpoint,
                   n_horizon=n_horizon, r=r,
                   tightner=tightner, confidence_cutoff=confidence_cutoff,
                   rnd_samples=rnd_samples, max_search=max_search, R=R, Q=Q, store_gif=True)
 
 # plot generation
-#dm.plot_simulation(system=system)
-#dm.show_gif_matplotlib(system = system, gif_name="matplotlib_animation_cs1_main.gif")
+dm.plot_simulation(system=system)
+dm.show_gif_matplotlib(system = system, gif_name="matplotlib_animation_cs1_main.gif")
 
 
 #dm.setup_case_study_2(hidden_layers=[10, 10], system=system, setpoint=setpoint,
@@ -82,3 +86,4 @@ dm.case_study_1(system=system, iter=iter, setpoint=setpoint,
 
 #dm.plot_simulation()
 #dm.show_gif_matplotlib(system = system, gif_name="matplotlib_animation_cs5_main.gif")
+

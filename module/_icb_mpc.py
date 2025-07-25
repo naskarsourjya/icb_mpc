@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
+import scienceplots
+
+plt.style.use(['science','no-latex'])
 
 
 class ICB_MPC():
@@ -484,6 +487,11 @@ class ICB_MPC():
             self.store_solver_stats = self.mpc.settings.store_solver_stats
             self.solver_stats = self.mpc.solver_stats
 
+            #if self.store_solver_stats[0] == 'success':
+            #    u0 = u0_new
+            #else:
+            #    break
+
             lbx = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_x')
             ubx = self.bounds_extractor(mpc=self.mpc, bnd_type='upper', var_type='_x')
             lbu = self.bounds_extractor(mpc=self.mpc, bnd_type='lower', var_type='_u')
@@ -885,9 +893,17 @@ class ICB_MPC():
                         label='Simulation' if i == 0 else None)
 
                 # System bounds (upper and lower)
-                ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='black', linestyle='solid',
-                        label='System Bounds' if i == 0 else None)
-                ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='black', linestyle='solid')
+                #ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='black', linestyle='solid',
+                #        label='System Bounds' if i == 0 else None)
+                #ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='black', linestyle='solid')
+
+                # System bounds (upper and lower)
+                upper_limit = np.full((len(branch_times),), self.cqr.ubx[i])
+                lower_limit = np.full((len(branch_times),), self.cqr.lbx[i])
+
+                # gray infill
+                ax.fill_between(history['time'].reshape(-1, ), lower_limit, upper_limit, color='gray',
+                                  alpha=0.5, label='System Bounds' if i == 0 else None)
 
                 # Optimized MPC bounds (upper and lower)
                 ax.plot(branch_times, [ubx[i]] * len(branch_times), color='purple', linestyle='dashed',
@@ -906,8 +922,16 @@ class ICB_MPC():
                 ax.plot(history['time'], u_combined, color='#1f77b4', linestyle='solid')
 
                 # System bounds (upper and lower)
-                ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='black', linestyle='solid')
-                ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='black', linestyle='solid')
+                #ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='black', linestyle='solid')
+                #ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='black', linestyle='solid')
+
+                # System bounds (upper and lower)
+                upper_limit = np.full((len(branch_times),), self.cqr.ubu[i])
+                lower_limit = np.full((len(branch_times),), self.cqr.lbu[i])
+
+                # gray infill
+                ax.fill_between(history['time'].reshape(-1, ), lower_limit, upper_limit, color='gray',
+                                alpha=0.5)
 
                 # Optimized MPC bounds (upper and lower)
                 ax.plot(branch_times, [ubu[i]] * len(branch_times), color='purple', linestyle='dashed')
