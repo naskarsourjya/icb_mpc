@@ -147,7 +147,7 @@ class cqr_narx():
         return None
 
 
-    def setup_plot(self, height_px=9, width_px=16):
+    def setup_plot(self, height_px=6, width_px=10):
 
         self.height_px = height_px
         self.width_px = width_px
@@ -597,7 +597,7 @@ class cqr_narx():
             n_q = len(quantiles)
 
             fig, axs = plt.subplots(n_q, 2, figsize=(self.width_px, self.height_px), sharex='col')
-            fig.suptitle("Individual CQR Training History")
+            #fig.suptitle("Individual CQR Training History")
 
             for i, quantile in enumerate(quantiles):
                 training_history = self.train_history_list[i]
@@ -662,8 +662,7 @@ class cqr_narx():
         #fig.suptitle('QR Error plots')
 
         fig = make_subplots(rows=n_x, cols=1, shared_xaxes=True)
-        fig.update_layout(height=self.height_px * 100, width=self.width_px * 100, title_text="QR Error Plots",
-                          showlegend=True)
+        fig.update_layout(height=self.height_px * 100, width=self.width_px * 100, showlegend=True)
 
         # sorting with timestamps
         x = t_test.reshape(-1, )
@@ -715,6 +714,85 @@ class cqr_narx():
 
         # end
         return None
+
+    def plot_qr_error_matplotlib(self, t_test, system, x_limit_up = None, x_limit_down = None, y_limit_up = None, y_limit_down = None, figsize= None, fig_name = None):
+        assert self.flags['qr_ready'], "Quantile regressor not ready."
+
+        # extract data
+        x_test = self.data['cqr_calibration_inputs']
+        y_test = self.data['cqr_calibration_errors']
+
+        # init
+        n_x = self.n_x
+        quantiles = self.quantiles
+        n_q = len(quantiles)
+        low_quantile = self.low_quantile
+        high_quantile = self.high_quantile
+        n_a = 1
+        model = system._get_model()
+        #all_y_labels = model.x.keys()
+        all_y_labels = ['$C_a [mol/L]$', '$C_b [mol/L]$', '$T_R [{}^\circ C]$', '$T_K [{}^\circ C]$']
+
+        # default fig size
+        if figsize is None:
+            figsize = (self.width_px, self.height_px)
+
+        # Set default device
+        self._set_device(torch_device=self.cqr_model.torch_device)
+
+        X_narx = torch.tensor(x_test.to_numpy(), dtype=self.dtype)
+        with torch.no_grad():
+            Y_pred = self.cqr_model(X_narx).cpu().numpy().T
+
+        # Sort timestamps and data
+        x = t_test.reshape(-1, )
+        sorted_indices = np.argsort(x)
+        x_sorted = x[sorted_indices]
+
+        # Setup subplots
+        fig, axes = plt.subplots(n_x, 1, figsize=figsize, sharex=True)
+        if n_x == 1:
+            axes = [axes]
+        #fig.suptitle("QR Error")
+
+        # Plot for each state
+        for i in range(n_x):
+            col_name = f'state_{i + 1}_next'
+
+            # mean prediction
+            axes[i].plot(x_sorted, y_test[col_name][sorted_indices], label='real mean' if i == 0 else None)
+
+            for j in range(n_q):
+
+                index = i + n_x * j
+
+                # high side prediction
+                axes[i].plot(x_sorted, Y_pred[index, :][sorted_indices], label=f'quantile={high_quantile}' if i == 0 else None)
+
+                # low side prediction
+                axes[i].plot(x_sorted, Y_pred[index, :][sorted_indices], label=f'quantile={low_quantile}' if i == 0 else None)
+
+            # set axis name
+            axes[i].set_ylabel(all_y_labels[i])
+
+
+        if y_limit_up is not None and y_limit_down is not None:
+            for i, ax in enumerate(axes):
+                ax.set_ylim(y_limit_down[i], y_limit_up[i])
+
+        if x_limit_up is not None and x_limit_down is not None:
+            for i, ax in enumerate(axes):
+                ax.set_xlim(x_limit_down[i], x_limit_up[i])
+
+        axes[i].set_xlabel('Time Stamp [s]')
+        fig.legend(loc='upper left', bbox_to_anchor=(1.00, 1))
+
+        if fig_name is not None:
+            fig.savefig(fig_name, bbox_inches='tight', format='pdf')
+
+        fig.show()
+        return None
+
 
     # Function to plot CQR error using Plotly
     def plot_cqr_error(self, x_test, y_test, t_test):
@@ -818,6 +896,83 @@ class cqr_narx():
             fig.update_xaxes(title_text='Times Stamp [s]', row=i + 1, col=1)
 
         # Show plot
+        fig.show()
+        return None
+
+
+    def plot_cqr_error_matplotlib(self, x_test, y_test, t_test, system, figsize = None, x_limit_up=None,
+                                  x_limit_down=None, y_limit_up=None, y_limit_down=None, fig_name=None):
+        assert self.flags['qr_ready'], "Quantile regressor not ready."
+        assert self.flags['cqr_ready'], "Quantile regressor not conformalised."
+
+        # Your model prediction/post-processing routines (unmodified)
+        self._set_device(torch_device=self.full_model.torch_device)
+        X_torch = torch.tensor(x_test.to_numpy(), dtype=self.dtype)
+        with torch.no_grad():
+            y_pred = self.full_model(X_torch)
+        x0, x0_cqr_high, x0_cqr_low = self._post_processing(y=y_pred)
+
+        n_x = self.n_x
+        alpha = self.alpha
+        low_quantile = self.low_quantile
+        high_quantile = self.high_quantile
+        model = system._get_model()
+        #all_y_labels = model.x.keys()
+        all_y_labels = ['$C_a [mol/L]$', '$C_b [mol/L]$', '$T_R [{}^\circ C]$', '$T_K [{}^\circ C]$']
+        if figsize is None:
+            figsize = (self.width_px, self.height_px)
+
+        # Sort by timestamps
+        sorted_indices = np.argsort(t_test)
+        x_sorted = np.array(t_test)[sorted_indices]
+
+        # Prepare figure
+        fig, axes = plt.subplots(n_x, 1, sharex=True, figsize=figsize)
+        if n_x == 1:
+            axes = [axes]
+
+        for i, ax in enumerate(axes):
+            # State bounds (shaded)
+            #ax.fill_between(x_sorted, self.lbx[i], self.ubx[i], color='lightgrey', alpha=0.3,
+            #                label='Bounds' if i == 0 else None)
+
+            # CQR confidence region (shaded)
+            ax.fill_between(x_sorted, x0_cqr_low[sorted_indices, i], x0_cqr_high[sorted_indices, i], color='gray',
+                            alpha=0.5, label=f'Confidence {1 - alpha}' if i == 0 else None)
+
+            # Predicted mean (dash-dot blue)
+            ax.plot(x_sorted, x0[sorted_indices, i], 'b-.', label='Predicted Mean' if i == 0 else None)
+
+            # Real mean (solid orange)
+            ax.plot(x_sorted, y_test.to_numpy()[sorted_indices, i], color='orange',
+                    label='Real Mean' if i == 0 else None)
+
+            # Quantile markers
+            #ax.scatter(x_sorted, x0_cqr_high[sorted_indices, i], color='green', s=36,
+            #           label=f'High Quantile={high_quantile}' if i == 0 else None)
+            #ax.scatter(x_sorted, x0_cqr_low[sorted_indices, i], color='purple', s=36,
+            #           label=f'Low Quantile={low_quantile}' if i == 0 else None)
+
+            ax.set_ylabel(all_y_labels[i])
+
+        #plt.suptitle('CQR State Plots')
+
+        if y_limit_up is not None and y_limit_down is not None:
+            for i, ax in enumerate(axes):
+                ax.set_ylim(y_limit_down[i], y_limit_up[i])
+
+        if x_limit_up is not None and x_limit_down is not None:
+            for i, ax in enumerate(axes):
+                ax.set_xlim(x_limit_down[i], x_limit_up[i])
+
+        ax.set_xlabel('Time Stamp [s]')
+        fig.legend(loc='upper left', bbox_to_anchor=(1.00, 1))
+
+        #fig.suptitle("Combined Case Studies")
+
+        if fig_name is not None:
+            fig.savefig(fig_name, bbox_inches='tight', format='pdf')
+
         fig.show()
         return None
 
@@ -1067,3 +1222,51 @@ class cqr_narx():
             plt.close(fig)
             return fig, axes
 
+
+
+    def plot_loss_history(self, fig_name=None):
+        assert self.flags['qr_ready'] is True, 'CQR not found! Generate or load CQR model!'
+
+        if self.type == 'individual':
+            quantiles = self.quantiles
+            n_q = len(quantiles)
+
+            fig, axs = plt.subplots(n_q, 1, figsize=(self.width_px, self.height_px), sharex='col')
+            #fig.suptitle("Individual CQR Training History")
+
+            for i, quantile in enumerate(quantiles):
+                training_history = self.train_history_list[i]
+                epochs = training_history['epochs']
+
+                # Learning Rate (left column)
+                #ax_lr = axs[i]
+                #ax_lr.plot(epochs, training_history['learning_rate'], color='red')
+                #ax_lr.set_yscale('log')
+                #ax_lr.set_ylabel(f'CQR (q={quantile})\nLearning Rate')
+                #ax_lr.set_xlabel('Epochs')
+
+                # Losses (right column) with twin y-axis
+                ax_loss = axs[i]
+                ax_val = ax_loss.twinx()
+                ax_loss.plot(epochs, training_history['training_loss'], color='green', label='Training Loss')
+                ax_val.plot(epochs, training_history['validation_loss'], color='blue', label='Validation Loss')
+
+                ax_loss.set_yscale('log')
+                ax_val.set_yscale('log')
+
+                ax_loss.set_ylabel(f'CQR (q={quantile})\nTraining Loss', color='green')
+                ax_val.set_ylabel(f'CQR (q={quantile})\nValidation Loss', color='blue')
+                ax_loss.set_xlabel('Epochs')
+
+                if i == 0:
+                    ax_loss.legend(loc='upper left')
+                    ax_val.legend(loc='upper right')
+
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+            fig.show()
+
+            # save figure as pdf
+        if fig_name is not None:
+            fig.savefig(fig_name, bbox_inches='tight', format='pdf')
+
+        return None

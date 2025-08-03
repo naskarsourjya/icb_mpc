@@ -407,7 +407,7 @@ class ICB_MPC():
         X_0_stacked = np.hstack([X_0] * X.shape[0])
         # K_lqr_stacked = np.vstack([K_lqr] * X.shape[0])
 
-        U_opt_n = (K_lqr @ (X[state_labels].to_numpy().reshape((-1, self.cqr.n_x)).T - X_0_stacked) +
+        U_opt_n = (-K_lqr @ (X[state_labels].to_numpy().reshape((-1, self.cqr.n_x)).T - X_0_stacked) +
                    X[input_labels].to_numpy().reshape((-1, self.cqr.n_u)).T)
 
         X_robust = X.copy()
@@ -902,7 +902,7 @@ class ICB_MPC():
                 lower_limit = np.full((len(branch_times),), self.cqr.lbx[i])
 
                 # gray infill
-                ax.fill_between(history['time'].reshape(-1, ), lower_limit, upper_limit, color='gray',
+                ax.fill_between(branch_times, lower_limit, upper_limit, color='gray',
                                   alpha=0.5, label='System Bounds' if i == 0 else None)
 
                 # Optimized MPC bounds (upper and lower)
@@ -930,7 +930,7 @@ class ICB_MPC():
                 lower_limit = np.full((len(branch_times),), self.cqr.lbu[i])
 
                 # gray infill
-                ax.fill_between(history['time'].reshape(-1, ), lower_limit, upper_limit, color='gray',
+                ax.fill_between(branch_times, lower_limit, upper_limit, color='gray',
                                 alpha=0.5)
 
                 # Optimized MPC bounds (upper and lower)

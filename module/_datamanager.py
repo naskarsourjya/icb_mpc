@@ -457,6 +457,21 @@ class DataManager(plotter):
 
         return None
 
+
+    def cqr_plot_qr_error_matplotlib(self, system, figsize = None, x_limit_up = None, x_limit_down = None,
+                                     y_limit_up = None, y_limit_down = None, fig_name = None):
+
+        df = self.data['cqr_calibration']
+
+        t_calib = df['time']
+
+        self.cqr.plot_qr_error_matplotlib(t_test=t_calib.to_numpy(), system=system, figsize=figsize,
+                                          x_limit_up=x_limit_up, x_limit_down=x_limit_down,
+                                          y_limit_up=y_limit_up, y_limit_down=y_limit_down, fig_name=fig_name)
+
+        return None
+
+
     def plot_cqr_error_plotly(self):
 
         df = self.data['cqr_calibration']
@@ -467,6 +482,24 @@ class DataManager(plotter):
         t_test = df['time']
 
         self.cqr.plot_cqr_error(x_test= x_test, y_test=y_test, t_test=t_test)
+
+        return None
+
+
+    def plot_cqr_error_matplotlib(self, system, figsize = None, x_limit_up = None, x_limit_down = None,
+                                     y_limit_up = None, y_limit_down = None, fig_name = None):
+
+        df = self.data['cqr_calibration']
+
+        # Extracting data
+        x_test = df[self.data['x_label']]
+        y_test = df[self.data['y_label']]
+        t_test = df['time']
+
+        self.cqr.plot_cqr_error_matplotlib(x_test= x_test, y_test=y_test, t_test=t_test, system=system,
+                                           figsize=figsize,
+                                          x_limit_up=x_limit_up, x_limit_down=x_limit_down,
+                                          y_limit_up=y_limit_up, y_limit_down=y_limit_down, fig_name=fig_name)
 
         return None
 
@@ -841,6 +874,7 @@ class DataManager(plotter):
         all_plots = []
         closed_loop_cost = []
         opt_success = []
+        conc_cb_list = []
         ic_flag = False if x_init is None else True
 
         # this is very specific to the mpc class for closed loop calc
@@ -914,6 +948,7 @@ class DataManager(plotter):
             #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
             closed_loop_cost.append(cl_cost)
             opt_success.append(cqr_mpc.solver_stats['success'])
+            conc_cb_list.append(x0[1,0])
 
             print(f"\n\n++++#### Simulation report ####++++")
             print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
@@ -927,7 +962,7 @@ class DataManager(plotter):
 
         end_time = time.time()
 
-        violation_flag = self._check_boundary__violation(system=system, simulator=simulator)
+        violation_prob = self._check_boundary_violation(system=system, simulator=simulator)
 
         # storage
         self.simulation['simulator'] = simulator
@@ -948,9 +983,10 @@ class DataManager(plotter):
                             'CQR Nodes': sum(self.cqr.hidden_layers),
                             'CQR Alpha': self.cqr.alpha,
                             'Initial Condition': ic_flag,
-                            'Optimizer Success': all(opt_success),
+                            'Optimizer Success': opt_success.count(True) / len(opt_success),
                             'Closed Loop Cost': sum(closed_loop_cost) / len(closed_loop_cost),
-                            'Boundary Violation': violation_flag,
+                            'Concentration Cb': sum(conc_cb_list) / len(conc_cb_list),
+                            'Boundary Violation Probability': violation_prob,
                             'Iterations': iter,
                             'MPC Horizon': n_horizon,
                             'MPC Input Cost': r,
@@ -965,18 +1001,43 @@ class DataManager(plotter):
         return self.cs1_results
 
 
-    def _check_boundary__violation(self, system, simulator):
+    def _check_boundary_violation(self, system, simulator):
 
         n_sampes = len(simulator.data['_time'])
         ubx_stacked = np.vstack([system.ubx]*n_sampes)
         lbx_stacked = np.vstack([system.lbx] * n_sampes)
         ubu_stacked = np.vstack([system.ubu] * n_sampes)
         lbu_stacked = np.vstack([system.lbu] * n_sampes)
+        range_x_stacked = ubx_stacked-lbx_stacked
+        range_u_stacked = ubu_stacked-lbu_stacked
 
-        if np.all(simulator.data['_x']>=lbx_stacked) and np.all(simulator.data['_x']<=ubx_stacked) and np.all(simulator.data['_u']>=lbu_stacked) and np.all(simulator.data['_u']<=ubu_stacked):
-            return False
-        else:
-            return True
+        # boundary violation, if positive: boundary is crossed
+        residue_upper_x = (simulator.data['_x'] - ubx_stacked) / range_x_stacked
+        residue_lower_x = (-simulator.data['_x'] + lbx_stacked) / range_x_stacked
+        residue_upper_u = (simulator.data['_u'] - ubu_stacked) / range_u_stacked
+        residue_lower_u = (-simulator.data['_u'] + lbu_stacked) / range_u_stacked
+
+        # clipping to zero if boundary not crossed
+        residue_upper_x[residue_upper_x < 0] = 0
+        residue_lower_x[residue_lower_x < 0] = 0
+        residue_upper_u[residue_upper_u < 0] = 0
+        residue_lower_u[residue_lower_u < 0] = 0
+
+        #calculating average deviation
+        avg_residue_upper_x = np.mean(residue_upper_x)
+        avg_residue_lower_x = np.mean(residue_lower_x)
+        avg_residue_upper_u = np.mean(residue_upper_u)
+        avg_residue_lower_u = np.mean(residue_lower_u)
+        
+        # calculating the violation probability
+        violation_prob = (avg_residue_upper_x + avg_residue_lower_x + avg_residue_upper_u + avg_residue_lower_u) / 4
+
+        return violation_prob
+
+        #if np.all(simulator.data['_x']>=lbx_stacked) and np.all(simulator.data['_x']<=ubx_stacked) and np.all(simulator.data['_u']>=lbu_stacked) and np.all(simulator.data['_u']<=ubu_stacked):
+        #    return False
+        #else:
+        #    return True
 
 
 
@@ -1018,6 +1079,7 @@ class DataManager(plotter):
 
         # plot the training performance
         narx_model.plot_narx_training_history()
+        narx_model.plot_loss_history(fig_name='cs2 NARX Loss History.pdf')
 
         # init surrogate model
         surrogate_model = Surrogate(n_x=self.data['n_x'], n_u=self.data['n_u'],
@@ -1052,6 +1114,7 @@ class DataManager(plotter):
         order = self.data['order']
         mpc_sur = self.cs2_surrogate
         closed_loop_cost = []
+        conc_cb_list = []
         opt_success = []
         u_prev = np.array([[0], [0]])
         r_mpc = self.cs2_results['MPC Input Cost'] * np.array([[0.1, 0],
@@ -1107,10 +1170,11 @@ class DataManager(plotter):
             #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
             closed_loop_cost.append(cl_cost)
             opt_success.append(mpc_sur.mpc.solver_stats['success'])
+            conc_cb_list.append(x0_real[1,0])
 
         end_time = time.time()
 
-        violation_flag = self._check_boundary__violation(system=system, simulator=real_simulator)
+        violation_prob = self._check_boundary_violation(system=system, simulator=real_simulator)
 
         # storage
         self.simulation['simulator'] = real_simulator
@@ -1122,9 +1186,10 @@ class DataManager(plotter):
         })
 
         # pass through
-        self.cs2_results['Optimizer Success'] = all(opt_success)
+        self.cs2_results['Optimizer Success'] = opt_success.count(True) / len(opt_success)
         self.cs2_results['Closed Loop Cost'] = sum(closed_loop_cost) / len(closed_loop_cost)
-        self.cs2_results['Boundary Violation'] = violation_flag
+        self.cs2_results['Concentration Cb'] = sum(conc_cb_list) / len(conc_cb_list)
+        self.cs2_results['Boundary Violation Probability'] = violation_prob
         self.cs2_results['Iterations'] = iter
         self.cs2_results['Time'] = end_time-start_time
         self.cs2_results['Initial Condition'] = ic_flag
@@ -1171,6 +1236,7 @@ class DataManager(plotter):
         order = self.data['order']
         robust_mpc_narx = self.robust_mpc_narx
         closed_loop_cost = []
+        conc_cb_list = []
         opt_success = []
         r_mpc = self.cs3_results['MPC Input Cost'] * np.array([[0.1, 0],
                                                            [0,   1e-3]])
@@ -1224,10 +1290,11 @@ class DataManager(plotter):
             #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
             closed_loop_cost.append(cl_cost)
             opt_success.append(robust_mpc_narx.mpc.solver_stats['success'])
+            conc_cb_list.append(x0_real[1,0])
 
         end_time = time.time()
 
-        violation_flag = self._check_boundary__violation(system=system, simulator=real_simulator)
+        violation_prob = self._check_boundary_violation(system=system, simulator=real_simulator)
 
         # storage
         self.simulation['simulator'] = real_simulator
@@ -1239,9 +1306,10 @@ class DataManager(plotter):
         })
 
         # pass through
-        self.cs3_results['Optimizer Success'] = all(opt_success)
+        self.cs3_results['Optimizer Success'] = opt_success.count(True) / len(opt_success)
         self.cs3_results['Closed Loop Cost'] = sum(closed_loop_cost) / len(closed_loop_cost)
-        self.cs3_results['Boundary Violation'] = violation_flag
+        self.cs3_results['Concentration Cb'] = sum(conc_cb_list) / len(conc_cb_list)
+        self.cs3_results['Boundary Violation Probability'] = violation_prob
         self.cs3_results['Iterations'] = iter
         self.cs3_results['Time'] = end_time-start_time
         self.cs3_results['Initial Condition'] = ic_flag
@@ -1276,6 +1344,7 @@ class DataManager(plotter):
         cs4_mpc = self.cs4_mpc
         closed_loop_cost = []
         opt_success = []
+        conc_cb_list = []
         ic_flag = False if x_init is None else True
 
         r_mpc = self.cs4_results['MPC Input Cost'] * np.array([[0.1, 0],
@@ -1329,10 +1398,11 @@ class DataManager(plotter):
             #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
             closed_loop_cost.append(cl_cost)
             opt_success.append(cs4_mpc.mpc.solver_stats['success'])
+            conc_cb_list.append(x0_real[1,0])
 
         end_time = time.time()
 
-        violation_flag = self._check_boundary__violation(system=system, simulator=real_simulator)
+        violation_prob = self._check_boundary_violation(system=system, simulator=real_simulator)
 
         # storage
         self.simulation['simulator'] = real_simulator
@@ -1344,9 +1414,10 @@ class DataManager(plotter):
         })
 
         # pass through
-        self.cs4_results['Optimizer Success'] = all(opt_success)
+        self.cs4_results['Optimizer Success'] = opt_success.count(True) / len(opt_success)
         self.cs4_results['Closed Loop Cost'] = sum(closed_loop_cost) / len(closed_loop_cost)
-        self.cs4_results['Boundary Violation'] = violation_flag
+        self.cs4_results['Concentration Cb'] = sum(conc_cb_list) / len(conc_cb_list)
+        self.cs4_results['Boundary Violation Probability'] = violation_prob
         self.cs4_results['Iterations'] = iter
         self.cs4_results['Time'] = end_time-start_time
         self.cs4_results['Initial Condition'] = ic_flag
@@ -1366,6 +1437,7 @@ class DataManager(plotter):
         order = self.data['order']
         all_plots = []
         closed_loop_cost = []
+        conc_cb_list = []
         opt_success = []
         r_mpc = r * np.array([[0.1, 0],
                               [0,   1e-3]])
@@ -1438,6 +1510,7 @@ class DataManager(plotter):
             #closed_loop_cost.append(cqr_mpc.solver_stats['iterations']['obj'][-1])
             closed_loop_cost.append(cl_cost)
             opt_success.append(cqr_mpc.solver_stats['success'])
+            conc_cb_list.append(x0[1,0])
 
             print(f"\n\n++++#### Simulation report ####++++")
             print(f"Time: {simulator.t0}, Iteration: {i + 1} / {iter}")
@@ -1451,7 +1524,7 @@ class DataManager(plotter):
 
         end_time = time.time()
 
-        violation_flag = self._check_boundary__violation(system=system, simulator=simulator)
+        violation_prob = self._check_boundary_violation(system=system, simulator=simulator)
 
         # storage
         self.simulation['simulator'] = simulator
@@ -1472,9 +1545,10 @@ class DataManager(plotter):
                             'CQR Nodes': sum(self.cqr.hidden_layers),
                             'CQR Alpha': self.cqr.alpha,
                             'Initial Condition': ic_flag,
-                            'Optimizer Success': all(opt_success),
+                            'Optimizer Success': opt_success.count(True) / len(opt_success),
                             'Closed Loop Cost': sum(closed_loop_cost) / len(closed_loop_cost),
-                            'Boundary Violation': violation_flag,
+                            'Concentration Cb': sum(conc_cb_list) / len(conc_cb_list),
+                            'Boundary Violation Probability': violation_prob,
                             'Iterations': iter,
                             'MPC Horizon': n_horizon,
                             'MPC Input Cost': r,
@@ -1488,7 +1562,7 @@ class DataManager(plotter):
         return self.cs5_results
     
 
-    def combine_plots(self, system, x_limit_up = None, x_limit_down = None, y_limit_up = None, y_limit_down = None, figsize= None):
+    def combine_plots(self, system, x_limit_up = None, x_limit_down = None, y_limit_up = None, y_limit_down = None, figsize= None, fig_name=None):
         """
         Combines all case study plots into a single figure.
         """
@@ -1503,7 +1577,8 @@ class DataManager(plotter):
         n_x = self.data['n_x']
         n_u = self.data['n_u']
         model = system._get_model()
-        all_y_labels = model.x.keys() + model.u.keys()[1:] + model.aux.keys()[1:]
+        #all_y_labels = model.x.keys() + model.u.keys()[1:] + model.aux.keys()[1:]
+        all_y_labels = ['$C_a [mol/L]$', '$C_b [mol/L]$', '$T_R [{}^\circ C]$', '$T_K [{}^\circ C]$', '$F [L/h]$', '$Q_{dot} [kJ/h]$']
         simulators = [self.simulation['cs1'], self.simulation['cs2'], self.simulation['cs3'], self.simulation['cs4'], self.simulation['cs5']]
         labels = ['cs1', 'cs2', 'cs3', 'cs4', 'cs5']
         counter = 0
@@ -1526,7 +1601,10 @@ class DataManager(plotter):
             lower_limit = np.full((simulator.data['_time'].shape[0],), system.lbx[i])
 
             # gray infill
-            ax.fill_between(simulator.data['_time'].reshape(-1,), lower_limit, upper_limit, color='gray', alpha=0.5)
+            ax.fill_between(simulator.data['_time'].reshape(-1,), lower_limit, upper_limit, color='gray', alpha=0.5,
+                            label='system bounds' if i == 0 else None)
+            #ax.plot(simulator.data['_time'].reshape(-1,), upper_limit, linestyle='dashed', color='black')
+            #ax.plot(simulator.data['_time'].reshape(-1,), lower_limit, linestyle='dashed', color='black')
 
             # set y label
             ax.set_ylabel(all_y_labels[counter])
@@ -1549,6 +1627,8 @@ class DataManager(plotter):
 
             # gray infill
             ax.fill_between(simulator.data['_time'].reshape(-1,), lower_limit, upper_limit, color='gray', alpha=0.5)
+            #ax.plot(simulator.data['_time'].reshape(-1,), upper_limit, linestyle='dashed', color='black')
+            #ax.plot(simulator.data['_time'].reshape(-1,), lower_limit, linestyle='dashed', color='black')
 
             # set y label
             ax.set_ylabel(all_y_labels[counter])
@@ -1562,9 +1642,13 @@ class DataManager(plotter):
             for i, ax in enumerate(axes):
                 ax.set_xlim(x_limit_down[i], x_limit_up[i])
 
-        ax.set_xlabel('Time [s]')
-        fig.legend(loc='upper right')
-        fig.suptitle("Combined Case Studies")
+        ax.set_xlabel('$Time [h]$')
+        fig.legend(loc='upper left', bbox_to_anchor=(1.00, 1))
+        #fig.suptitle("Combined Case Studies")
+
+        # save figure as pdf
+        if fig_name is not None:
+            fig.savefig(fig_name, bbox_inches='tight', format='pdf')
 
         fig.show()
 

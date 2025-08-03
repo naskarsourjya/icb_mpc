@@ -715,9 +715,17 @@ class MPC_Brancher_midterm():
                         label='Simulation' if i == 0 else None)
 
                 # System bounds (upper and lower)
-                ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='grey', linestyle='solid',
-                        label='System Bounds' if i == 0 else None)
-                ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='grey', linestyle='solid')
+                #ax.plot(branch_times, [self.cqr.ubx[i]] * len(branch_times), color='grey', linestyle='solid',
+                #        label='System Bounds' if i == 0 else None)
+                #ax.plot(branch_times, [self.cqr.lbx[i]] * len(branch_times), color='grey', linestyle='solid')
+
+                # System bounds (upper and lower)
+                upper_limit = np.full((len(branch_times),), self.cqr.ubx[i])
+                lower_limit = np.full((len(branch_times),), self.cqr.lbx[i])
+
+                # gray infill
+                ax.fill_between(branch_times, lower_limit, upper_limit, color='gray',
+                                alpha=0.5, label='System Bounds' if i == 0 else None)
 
                 # Optimized MPC bounds (upper and lower)
                 ax.plot(branch_times, [ubx[i]] * len(branch_times), color='orange', linestyle='dashed',
@@ -737,8 +745,16 @@ class MPC_Brancher_midterm():
                 ax.plot(history['time'], u_combined, color='black', linestyle='solid')
 
                 # System bounds (upper and lower)
-                ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='grey', linestyle='solid')
-                ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='grey', linestyle='solid')
+                #ax.plot(branch_times, [self.cqr.ubu[i]] * len(branch_times), color='grey', linestyle='solid')
+                #ax.plot(branch_times, [self.cqr.lbu[i]] * len(branch_times), color='grey', linestyle='solid')
+
+                # System bounds (upper and lower)
+                upper_limit = np.full((len(branch_times),), self.cqr.ubu[i])
+                lower_limit = np.full((len(branch_times),), self.cqr.lbu[i])
+
+                # gray infill
+                ax.fill_between(branch_times, lower_limit, upper_limit, color='gray',
+                                alpha=0.5)
 
                 # Optimized MPC bounds (upper and lower)
                 ax.plot(branch_times, [ubu[i]] * len(branch_times), color='orange', linestyle='dashed')

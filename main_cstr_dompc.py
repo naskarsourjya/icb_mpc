@@ -15,7 +15,7 @@ system = CSTR_dompc(set_seed=0)
 dm = DataManager(set_seed = 0)
 
 # generate data
-dm.random_input_sampler(system = system, n_samples=500)
+dm.random_input_sampler(system = system, n_samples=1000)
 
 # set order and split data accordingly
 dm.data_splitter(order=1)
@@ -32,10 +32,11 @@ dm.train_cqr(alpha=0.1, hidden_layers=[2], batch_size=1000,
 #dm.cqr.plot_qr_training_history()
 
 # verify qr performance
-#dm.cqr_plot_qr_error()
+dm.cqr_plot_qr_error()
+dm.cqr_plot_qr_error_matplotlib(system=system)
 
 # verify cqr performance
-#dm.plot_cqr_error_plotly()
+dm.plot_cqr_error_matplotlib(system=system)
 
 # checking simulator performance
 C_a0 = 0
@@ -62,21 +63,26 @@ r = 0.1
 tightner = 0.1
 confidence_cutoff = 0.8
 rnd_samples = 7
-max_search = 3
+max_search = 10
+
 dm.case_study_1(system=system, iter=iter, setpoint=setpoint,
                   n_horizon=n_horizon, r=r,
                   tightner=tightner, confidence_cutoff=confidence_cutoff,
                   rnd_samples=rnd_samples, max_search=max_search, R=R, Q=Q, store_gif=True)
 
 # plot generation
-dm.plot_simulation(system=system)
-dm.show_gif_matplotlib(system = system, gif_name="matplotlib_animation_cs1_main.gif")
+#dm.plot_simulation(system=system)
+#dm.show_gif_matplotlib(system = system, gif_name="matplotlib_animation_cs1_main.gif")
 
 
 #dm.setup_case_study_2(hidden_layers=[10, 10], system=system, setpoint=setpoint,
 #                      n_horizon=n_horizon, r=r, epochs=1000, batch_size=1000)
 #dm.case_study_2(system=system, iter = iter, x_init=x_init)
 #dm.plot_simulation(system=system)
+
+
+dm.setup_case_study_4(system=system, n_horizon=n_horizon, r=r, setpoint=setpoint)
+cs4 = dm.case_study_4(system=system, iter=iter, x_init=x_init)
 
 # case study 4
 #dm.case_study_5(system=system, iter=10, setpoint=None,

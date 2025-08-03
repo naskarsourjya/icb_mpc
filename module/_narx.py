@@ -183,7 +183,7 @@ class narx():
         return None
 
 
-    def setup_plot(self, height_px=9, width_px=16):
+    def setup_plot(self, height_px=6, width_px=10):
 
         self.height_px = height_px
         self.width_px = width_px
@@ -196,7 +196,7 @@ class narx():
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(self.width_px, self.height_px), sharex=True)
 
-        fig.suptitle("NARX Training History")
+        #fig.suptitle("NARX Training History")
 
         # Plot 1: Training and Validation Loss with dual y-axis
         color1 = 'green'
@@ -215,16 +215,52 @@ class narx():
         # Legends
         ax1.legend(loc='upper left')
         ax1b.legend(loc='upper right')
-        ax1.set_title('Loss History')
+        #ax1.set_title('Loss History')
 
         # Plot 2: Learning Rate
         ax2.plot(train_history['epochs'], train_history['learning_rate'], color='blue')
         ax2.set_ylabel("Learning Rate")
         ax2.set_xlabel("Epochs")
         ax2.set_yscale('log')
-        ax2.set_title('Learning Rate')
+        #ax2.set_title('Learning Rate')
 
-        plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for suptitle
-        plt.show()
+        fig.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for suptitle
+        fig.show()
+
+        return None
+
+    def plot_loss_history(self, fig_name=None):
+        train_history = self.train_history
+
+        fig, ax1 = plt.subplots(1, 1, figsize=(self.width_px, self.height_px), sharex=True)
+
+        #fig.suptitle("NARX Training History")
+
+        # Plot 1: Training and Validation Loss with dual y-axis
+        color1 = 'green'
+        ax1.plot(train_history['epochs'], train_history['training_loss'], color=color1, label='Training Loss')
+        ax1.set_ylabel("Training Loss", color=color1)
+        ax1.set_yscale('log')
+        ax1.tick_params(axis='y', labelcolor=color1)
+
+        ax1b = ax1.twinx()  # Secondary y-axis
+        color2 = 'red'
+        ax1b.plot(train_history['epochs'], train_history['validation_loss'], color=color2, label='Validation Loss')
+        ax1b.set_ylabel("Validation Loss", color=color2)
+        ax1b.set_yscale('log')
+        ax1b.tick_params(axis='y', labelcolor=color2)
+
+        # Legends
+        ax1.legend(loc='upper left')
+        ax1b.legend(loc='upper right')
+        ax1.set_xlabel("Epochs")
+        #ax1.set_title('Loss History')
+
+        fig.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for suptitle
+
+        if fig_name is not None:
+            fig.savefig(fig_name, bbox_inches='tight', format='pdf')
+
+        fig.show()
 
         return None
