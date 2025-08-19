@@ -1,4 +1,4 @@
-# Iterative Constricting Boundary Nominal Model Predictive Control
+# Iterative Constricting Boundary Model Predictive Control
 Hey, I am Sourjya Naskar, and this is my Master's Thesis, during my Masters in Process Systems Engineering at TU Dortmund, 2025. This code executes CQR on Nvidia GPU to guarantee the results of an MPC.
 
 # Christmas holiday
